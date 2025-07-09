@@ -1,3 +1,5 @@
+![Coral reef fish](images/AdobeStock_466179536.jpeg)
+
 # Widespread Heterogeneity in Density-Dependent Mortality of Nearshore Fishes
 
 **Authors**  
