@@ -181,3 +181,33 @@ Upon publication, citation DOIs (manuscript + Dryad) will be added.
 
 - Adrian C. Stier — [0000-0002-4704-4145](https://orcid.org/0000-0002-4704-4145)
 
+---
+
+
+## Reproducibility Summary
+
+This repository follows key principles of open, reproducible science. The table below summarizes the key components of reproducibility for this project:
+
+| Component                     | Status                      | Details                                                                 |
+|------------------------------|-----------------------------|-------------------------------------------------------------------------|
+| **Code availability**        | ✅ Available                 | All scripts included in the `code/` directory                           |
+| **Data availability**        | ✅ Available                 | Raw data in `data/`; each file includes a Dryad-style metadata `.txt`  |
+| **Environment**              | ✅ Documented                | R ≥ 4.2.0, dependencies listed in `code/0_libraries.R`                  |
+| **Full workflow script**     | ✅ Available                 | `code/00_run_all.R` runs full analysis pipeline                         |
+| **Intermediate results**     | ✅ Included                  | See `results/` folder                                                   |
+| **Final outputs**            | ✅ Included                  | See `output/` and `figures/`                                            |
+| **Manuscript linkage**       | ✅ In progress               | *Ecology Letters*, in review                                           |
+| **License**                  | ✅ Open                      | Code: MIT License, Data: CC0                                           |
+| **Version control**          | ✅ GitHub                    | All development tracked via Git                                         |
+
+**How to reproduce full analysis:**  
+1. Clone repo  
+2. Run `source("code/00_run_all.R")` in R  
+
+For issues or questions, contact:  
+📧 Adrian Stier – astier@ucsb.edu  
+📧 Craig Osenberg – osenberg@uga.edu
+
+</pre>
+
+
