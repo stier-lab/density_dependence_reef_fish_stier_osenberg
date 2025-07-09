@@ -1,0 +1,48 @@
+
+# README: combined_results_2024-09-17.csv
+
+## Title
+Estimates of density-independent mortality and density dependence strength from nonlinear models across reef fish substudies
+
+## Authors
+- Adrian Stier (University of California, Santa Barbara; astier@ucsb.edu; ORCID: 0000-0000-0000-0000)
+- [Insert co-author names, affiliations, and ORCIDs as needed]
+
+## Abstract
+This file contains parameter estimates (`alpha`, `beta`) and associated variances from nonlinear least squares models applied to mortality-density data collected across multiple reef fish substudies. The dataset supports meta-analysis of density-dependent mortality dynamics in marine fish. Data were generated using the `nls()` function in R and support the findings of a manuscript submitted to *Ecology Letters*.
+
+## Keywords
+density dependence, nonlinear modeling, mortality, reef fish, population dynamics, ecological data
+
+## Methods
+Mortality data from reef fish substudies were fit using a nonlinear model. Fits were performed in R using `nls()`. The `alpha` parameter estimates density-independent mortality, and `beta` represents the strength of density-dependent mortality. Variances were calculated from model fits or bootstrapped. 
+
+## Temporal and Spatial Coverage
+- Temporal range: 1990–2021
+- Spatial extent: Tropical coral reef systems; specific locations detailed in associated manuscript Table S1
+
+## License
+CC0 1.0 Universal (public domain dedication)
+
+## File Description
+
+| Column Name       | Description                                                                | Units             |
+|-------------------|----------------------------------------------------------------------------|-------------------|
+| substudy_num      | Unique identifier for each independent study or treatment group            | unitless (integer)|
+| alpha             | Estimated intercept (density-independent mortality)                        | per capita rate   |
+| beta              | Estimated slope (density dependence in mortality)                          | rate × density    |
+| alpha_variance    | Estimated variance of alpha                                                | (per capita rate)^2 |
+| beta_variance     | Estimated variance of beta                                                 | (rate × density)^2 |
+
+## Related Files and Scripts
+- R script used to generate this file: `2_beta_estimate.R`
+- Final dataset used in figures and models: see `all_dat2` object (described elsewhere)
+- To fully reproduce the dataset, access the full code repository at [insert GitHub or Zenodo DOI]
+
+## Funding
+- NSF OCE-1851510 (Stier and Osenberg)
+- Additional sources listed in manuscript Acknowledgments
+
+## Notes
+- Rows with NA values reflect studies with non-convergent estimates.
+- Use with appropriate citation of the associated manuscript (Stier et al., in review).
