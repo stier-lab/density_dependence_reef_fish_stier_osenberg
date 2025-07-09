@@ -123,10 +123,67 @@ Phylogenies sourced from:
 
 ---
 
+## Dependencies
+
+This project was developed in R (version ≥ 4.2.0) using the following packages:
+
+- `metafor` (meta-analysis models)
+- `ape` and `phytools` (phylogenetic trees)
+- `dplyr`, `tidyr`, `tibble` (data manipulation)
+- `ggplot2`, `patchwork` (visualizations)
+- `nlme`, `MCMCglmm` (mixed-effects models)
+- `readr`, `readxl` (data import)
+- `here`, `glue`, `stringr` (file paths and string ops)
+
+Install all dependencies using:
+
+```r
+source("code/0_libraries.R")
+```
+
+---
+
+## Workflow Instructions
+
+To reproduce all analyses and figures:
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/[YOUR_USERNAME]/density_dependence_reef_fish_stier_osenberg.git
+   ```
+
+2. Open the R project or RStudio and run:
+   ```r
+   source("code/00_run_all.R")
+   ```
+
+3. This will sequentially run:
+   - `1_data_phylogeny_loading.R`: load data and trees
+   - `2_beta_estimate.R`: estimate alpha and beta
+   - `3_phylogenetic_analysis.R`: test for phylogenetic signal
+   - `4_predators_pairedpredators.R`: examine predator effects
+   - `5_model_selection_comparison.R`: compare models
+   - `6_bivariate_plots_predictors.R`: generate visualizations
+
+Outputs will be saved to the `output/` and `figures/` directories.
+
+---
+
+## Funding
+
+This work was supported by:
+
+- **National Science Foundation** (NSF OCE-1851510)
+- Additional support acknowledged in the associated *Ecology Letters* manuscript.
+
+---
+
 ## Citation
 
-When using this repository or dataset, please cite:
+If using this code or data, please cite:
 
-> Stier, A.C., & Osenberg, C.W. (in review). Widespread heterogeneity in density-dependent mortality of nearshore fishes. *Ecology Letters*.
+> Stier, A. C. & Osenberg, C. W. *Widespread heterogeneity in density-dependent mortality of nearshore fishes.* Ecology Letters (in review).
 
-> NSF Grant OCE-1851510
+Once published, please cite the article DOI and dataset DOI via Dryad [link to be added].
+
+---
