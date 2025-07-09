@@ -1,10 +1,3 @@
-Thanks for your patience. Here’s the fully revised README.md in Markdown format wrapped in a copy-pastable code block, incorporating all required metadata elements (dependencies, workflow, funding, citation, data linkage, etc.). I’ve also ensured alignment between file names, metadata, and project structure.
-
-⚠️ Note: Some earlier files have expired. If you want help regenerating or linking those, please re-upload them.
-
-⸻
-
-
 ![Coral reef fish](images/AdobeStock_466179536.jpeg)
 
 # Widespread Heterogeneity in Density-Dependent Mortality of Nearshore Fishes
@@ -188,6 +181,3 @@ Upon publication, citation DOIs (manuscript + Dryad) will be added.
 
 - Adrian C. Stier — [0000-0002-4704-4145](https://orcid.org/0000-0002-4704-4145)
 
----
-
-Let me know if you’d like this saved as a .md file or pushed into a GitHub Pages-ready format!
