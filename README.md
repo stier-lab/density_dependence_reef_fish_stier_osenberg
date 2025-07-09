@@ -1,3 +1,10 @@
+Thanks for your patience. Here’s the fully revised README.md in Markdown format wrapped in a copy-pastable code block, incorporating all required metadata elements (dependencies, workflow, funding, citation, data linkage, etc.). I’ve also ensured alignment between file names, metadata, and project structure.
+
+⚠️ Note: Some earlier files have expired. If you want help regenerating or linking those, please re-upload them.
+
+⸻
+
+
 ![Coral reef fish](images/AdobeStock_466179536.jpeg)
 
 # Widespread Heterogeneity in Density-Dependent Mortality of Nearshore Fishes
@@ -17,23 +24,25 @@ National Science Foundation (NSF) Grant [OCE-1851510](https://www.nsf.gov/awards
 
 ## Overview
 
-This repository contains the full data synthesis and analysis pipeline for a meta-analysis of density-dependent mortality in reef fishes. Using digitized data from >30 substudies across tropical coral reefs, we fit nonlinear mortality models to estimate density-independent (α) and density-dependent (β) mortality, examined ecological and phylogenetic drivers of β, and evaluated methodological effects.
+This repository contains the complete data synthesis and analysis pipeline for a global meta-analysis on density-dependent mortality in reef fishes. We estimated mortality parameters (α and β) from >30 ecological studies and explored how ecological traits, experimental methods, and phylogenetic history explain variation in density dependence.
 
 This repository supports the manuscript:
 
-**“Widespread Heterogeneity in Density-Dependent Mortality of Nearshore Fishes”**  
-Stier & Osenberg, *in review*
+> **Stier & Osenberg**  
+> *Widespread Heterogeneity in Density-Dependent Mortality of Nearshore Fishes*  
+> *Ecology Letters* (in review)
 
 ---
 
 ## Repository Structure
 
 ```
-code/           # All R scripts to load, analyze, and model the data
-data/           # Raw digitized data, trait and covariate tables, phylogenies, metadata
-output/         # Final model outputs and compiled estimates of α and β
-results/        # Intermediate results, diagnostics, model comparisons
-figures/        # Final visualizations used in the manuscript
+code/           # All R scripts for data loading, modeling, and figure generation
+data/           # Raw data, phylogenies, covariates, and metadata
+output/         # Model outputs, effect sizes, and summary tables
+results/        # Intermediate results, AIC tables, phylogenetic diagnostics
+figures/        # Final figures used in the manuscript
+images/         # Supplemental images for README (e.g., reef fish photo)
 ```
 
 ---
@@ -47,95 +56,78 @@ git clone https://github.com/[your-username]/density_dependence_reef_fish_stier_
 cd density_dependence_reef_fish_stier_osenberg
 ```
 
-2. Open R and set the working directory to the repository root.
-
-3. Run the master script:
+2. Open R or RStudio and run:
 
 ```r
 source("code/00_run_all.R")
 ```
 
-4. Required R packages are listed and loaded in `code/0_libraries.R`.
+3. All outputs will be saved to the `output/`, `results/`, and `figures/` directories.
 
 ---
 
 ## Code Overview
 
-| Script | Description |
-|--------|-------------|
-| `code/0_libraries.R` | Loads required R packages |
-| `code/00_run_all.R` | Master script to run the entire pipeline |
-| `code/1_data_phylogeny_loading.R` | Loads raw datasets and phylogenetic trees |
-| `code/2_beta_estimate.R` | Fits nonlinear models to estimate α and β |
-| `code/3_phylogenetic_analysis.R` | Tests for phylogenetic signal in β |
-| `code/4_predators_pairedpredators.R` | Compares β with/without predators |
-| `code/5_model_selection_comparison.R` | Trait-based model selection and meta-regression |
-| `code/6_bivariate_plots_predictors.R` | Generates bivariate β vs. predictor plots |
+| Script                                 | Description                                                         |
+|----------------------------------------|---------------------------------------------------------------------|
+| `code/0_libraries.R`                   | Loads all required R packages                                       |
+| `code/00_run_all.R`                    | Master script to reproduce full pipeline                            |
+| `code/1_data_phylogeny_loading.R`      | Loads raw data and phylogenies                                      |
+| `code/2_beta_estimate.R`               | Estimates α and β from nonlinear fits                               |
+| `code/3_phylogenetic_analysis.R`       | Quantifies phylogenetic signal in β                                 |
+| `code/4_predators_pairedpredators.R`   | Tests for predator effects on β                                     |
+| `code/5_model_selection_comparison.R`  | Compares covariate-based and random-effects models                  |
+| `code/6_bivariate_plots_predictors.R`  | Generates bivariate plots of predictors vs. β                       |
 
 ---
 
 ## Data Contents
 
-### `data/` folder includes:
-- `all_studies_looped-2024-09-11.csv`: Raw mortality observations extracted from published figures/tables
-- `combined_results_2024-09-17.csv`: Final α and β estimates for each substudy
-- `covariates-2024-09-30.csv`: Ecological and methodological traits per substudy
-- `unique_species_studies.xlsx`: Life history traits per species × substudy
-- `manual_densities.csv`: Manually extracted density values for digitization QA/QC
-- `*.tre`: Phylogenetic trees from Rabosky et al. (2018), Siqueira et al. (2020), and OpenTree
+All data files are in the `data/` directory and are accompanied by `.txt` metadata files in Dryad-compatible format. Key files include:
 
-All data files are documented with accompanying `.txt` metadata files (Dryad-compatible).
+- `all_studies_looped-2024-09-11.csv`: Raw digitized mortality data
+- `combined_results_2024-09-17.csv`: Final α and β estimates across substudies
+- `covariates-2024-09-30.csv`: Study-level traits and methodological variables
+- `manual_densities.csv`: Manually extracted densities used for QA
+- `unique_species_studies.xlsx`: Species traits per study
+- `1.newick.tre`: Phylogeny from Open Tree of Life
+- `actinopt_12k_treePL.tre`: Time-calibrated tree from Rabosky et al. (2018)
+- `Reef_fish_all.tacted.newick.tre`: Species-level reef fish tree from Siqueira et al. (2020)
+
+Each file has an associated metadata file (e.g., `*_metadata.txt`) describing variables, units, sources, and context.
 
 ---
 
-## Output
+## Output Contents
 
 ### `output/`
-- Model-fitted α and β with variances
-- Tables of covariate effects
-- Species-level and study-level summaries
-
-### `figures/`
-- Final figures used in the manuscript
+- Final α and β estimates with variances
+- Covariate model coefficients and confidence intervals
+- Exportable tables used in manuscript
 
 ### `results/`
-- AIC tables
-- Phylogenetic signal results
-- Model comparison diagnostics
+- Phylogenetic signal estimates (Pagel’s λ)
+- Model selection (AICc tables)
+- Model diagnostics and fits
 
----
-
-## Data Sources and Citations
-
-Primary data were extracted from published ecological studies (see manuscript Table S1).  
-Phylogenies sourced from:
-
-- Rabosky et al. (2018): [https://doi.org/10.1038/s41586-018-0273-1](https://doi.org/10.1038/s41586-018-0273-1)
-- Siqueira et al. (2020): [https://doi.org/10.1038/s41467-020-16498-w](https://doi.org/10.1038/s41467-020-16498-w)
-- Open Tree of Life: [https://tree.opentreeoflife.org](https://tree.opentreeoflife.org)
-
----
-
-## License
-
-- **Data**: [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
-- **Code**: MIT License
+### `figures/`
+- Final figures (e.g., trait-β plots, phylogenetic tree overlays)
 
 ---
 
 ## Dependencies
 
-This project was developed in R (version ≥ 4.2.0) using the following packages:
+This project was developed using R (≥ 4.2.0). Core packages include:
 
-- `metafor` (meta-analysis models)
-- `ape` and `phytools` (phylogenetic trees)
-- `dplyr`, `tidyr`, `tibble` (data manipulation)
-- `ggplot2`, `patchwork` (visualizations)
-- `nlme`, `MCMCglmm` (mixed-effects models)
-- `readr`, `readxl` (data import)
-- `here`, `glue`, `stringr` (file paths and string ops)
+- `metafor` – meta-analysis models
+- `ape`, `phytools` – phylogenetic manipulation and plotting
+- `dplyr`, `tibble`, `tidyr` – data wrangling
+- `ggplot2`, `patchwork` – plotting
+- `nlme`, `MCMCglmm` – mixed and phylogenetic models
+- `readr`, `readxl` – file I/O
+- `here`, `glue`, `stringr` – utilities
 
-Install all dependencies using:
+To install all packages, run:
 
 ```r
 source("code/0_libraries.R")
@@ -145,45 +137,57 @@ source("code/0_libraries.R")
 
 ## Workflow Instructions
 
-To reproduce all analyses and figures:
+To fully reproduce the analysis:
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/[YOUR_USERNAME]/density_dependence_reef_fish_stier_osenberg.git
-   ```
+```r
+# 1. Clone and enter repo
+git clone https://github.com/[your-username]/density_dependence_reef_fish_stier_osenberg.git
+cd density_dependence_reef_fish_stier_osenberg
 
-2. Open the R project or RStudio and run:
-   ```r
-   source("code/00_run_all.R")
-   ```
+# 2. Open R and run:
+source("code/00_run_all.R")
+```
 
-3. This will sequentially run:
-   - `1_data_phylogeny_loading.R`: load data and trees
-   - `2_beta_estimate.R`: estimate alpha and beta
-   - `3_phylogenetic_analysis.R`: test for phylogenetic signal
-   - `4_predators_pairedpredators.R`: examine predator effects
-   - `5_model_selection_comparison.R`: compare models
-   - `6_bivariate_plots_predictors.R`: generate visualizations
+This will:
 
-Outputs will be saved to the `output/` and `figures/` directories.
+1. Load and clean data  
+2. Estimate α and β  
+3. Fit phylogenetic and trait-based models  
+4. Output diagnostics, figures, and tables
 
 ---
 
-## Funding
+## Data Provenance
 
-This work was supported by:
+- **Mortality data**: Digitized from published ecological studies (see manuscript Table S1)
+- **Phylogenies**:
+  - Rabosky et al. (2018): [https://doi.org/10.1038/s41586-018-0273-1](https://doi.org/10.1038/s41586-018-0273-1)
+  - Siqueira et al. (2020): [https://doi.org/10.1038/s41467-020-16498-w](https://doi.org/10.1038/s41467-020-16498-w)
+  - OpenTree: [https://tree.opentreeoflife.org/curator/study/view/ot_1592](https://tree.opentreeoflife.org/curator/study/view/ot_1592)
 
-- **National Science Foundation** (NSF OCE-1851510)
-- Additional support acknowledged in the associated *Ecology Letters* manuscript.
+---
+
+## License
+
+- **Data**: [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
+- **Code**: [MIT License](https://opensource.org/licenses/MIT)
 
 ---
 
 ## Citation
 
-If using this code or data, please cite:
+If using this dataset or codebase, please cite:
 
 > Stier, A. C. & Osenberg, C. W. *Widespread heterogeneity in density-dependent mortality of nearshore fishes.* Ecology Letters (in review).
 
-Once published, please cite the article DOI and dataset DOI via Dryad [link to be added].
+Upon publication, citation DOIs (manuscript + Dryad) will be added.
 
 ---
+
+## ORCID IDs
+
+- Adrian C. Stier — [0000-0002-4704-4145](https://orcid.org/0000-0002-4704-4145)
+
+---
+
+Let me know if you’d like this saved as a .md file or pushed into a GitHub Pages-ready format!
