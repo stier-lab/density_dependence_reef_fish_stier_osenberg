@@ -111,7 +111,7 @@ get_AICc <- function(mod) {
 }
 
 # ----------------------------------------------------------------------------
-# 6. Build “full” 5-way model & record AICc
+# 6. Build “full” 5-way model & record AICc - this is exploratory
 # ----------------------------------------------------------------------------
 vars_centered <- c("expt_obs","logmd_c","dur_c","size_c","max_c")
 all_terms     <- unlist(lapply(seq_along(vars_centered), function(k)
@@ -123,7 +123,7 @@ current_AICc  <- get_AICc(m_current)
 message("Initial AICc (full model) = ", round(current_AICc,3))
 
 # ----------------------------------------------------------------------------
-# 7. Support functions for hierarchical deletion
+# 7. Support functions for hierarchical deletion - this is exploratory
 # ----------------------------------------------------------------------------
 is_nested_in_higher <- function(lower, terms) {
   parts <- strsplit(lower,":",fixed=TRUE)[[1]]
@@ -197,7 +197,7 @@ drop_if_insig <- function(label, model) {
   
   if (max(ct[idx,"pval"],na.rm=TRUE) >= cutoff) {
     new_mod <- tryCatch(fit_rma(reformulate(setdiff(terms_now,label))),
-                        error=function(e) NULL)
+                        error=function(e) NULL) 
     if (!is.null(new_mod)) return(list(model=new_mod,dropped=TRUE))
   }
   list(model=model,dropped=FALSE)

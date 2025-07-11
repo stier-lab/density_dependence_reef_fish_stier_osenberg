@@ -49,7 +49,7 @@ library(metafor)
 # ----------------------------
 # 5. Visualization
 # ----------------------------
-required_pkgs_viz <- c("ggplot2", "GGally", "scales", "viridis", "wesanderson","fishtree")
+required_pkgs_viz <- c("ggplot2", "GGally", "scales","cowplot", "viridis", "wesanderson","fishtree")
 for (pkg in required_pkgs_viz) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
     stop(sprintf("Package '%s' is required but not installed.", pkg))

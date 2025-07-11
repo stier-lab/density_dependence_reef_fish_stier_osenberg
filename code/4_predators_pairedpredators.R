@@ -283,18 +283,31 @@ p2 <- ggplot() +
   ) +
   scale_color_manual(values = paired_cols) +
   scale_fill_manual(values = c(absent = "white", present = "#4682B4")) +
+  scale_x_discrete(labels = c("Absent", "Present")) + 
   scale_y_continuous(
     trans  = "asinh",
     breaks = c(-1000, -100, -10, -1, 0, 1, 10, 100, 1000)
   ) +
   labs(
-    x = "Predator Treatment",
-    y = expression(beta ~ "(density-dependence)")
+    x = "Predators",
+    y = expression(
+      paste(
+        "Strength of density-dependent mortality, ",
+        beta,
+        " (", 
+        cm^2,   # cm²
+        ~ fish^-1, 
+        ~ day^-1,
+        ")"
+      )
+    )
   ) +
   theme_classic(base_size = 12) +
   theme(legend.position = "none")
 
+print(p2)
+
 ggsave(
-  here::here("figures", "paired_vs_unpaired.png"),
+  here::here("figures", "Fig4_paired_vs_unpaired.png"),
   plot = p2, width = 6, height = 6, dpi = 300
 )
