@@ -54,6 +54,13 @@ fixed_effect_results <- coef_df %>%
     ci_upper       = inv_asinh(ci.ub)
   )
 
+# --- after you create fixed_effect_results ---
+
+# grab the back‐transformed intercept and CIs
+fixed_effect      <- fixed_effect_results %>% filter(component == "fixed_effect")
+back_transformed_coef       <- fixed_effect$estimate
+back_transformed_conf_lower <- fixed_effect$ci_lower
+back_transformed_conf_upper <- fixed_effect$ci_upper
 # ----------------------------------------------------------------------------
 # 4. Extract and back-transform variance components
 # ----------------------------------------------------------------------------
@@ -256,6 +263,11 @@ beverton_holt_plot <- ggplot() +
 
 print(beverton_holt_plot)
 
+
+
+
+
+
 # 6.2 Prepare and draw Orchard plot manually
 precision_breaks <- c(1e-12, 1e4, 1e6, 1e8, 1e12)
 precision_labels <- c(expression(10^-12), expression(10^4), expression(10^6), expression(10^8), expression(10^12))
@@ -266,6 +278,21 @@ global_estimate <- data.frame(
 )
 
 shape_mapping <- c("212", "249", "76", "256")
+
+
+beta_all_all<-all_dat2%>%
+  select(beta_hat,
+         beta_variance_nls2,
+         study_num,
+         substudy_num,
+         betanlsvar_raw_cm,
+         betanls2_raw_cm,
+         betanls2_asinh,
+         betanlsvar_asinh)
+
+beta_all_all <- beta_all_all %>%
+  mutate(precision = 1 / beta_variance_nls2)
+
 
 beta_all_all <- beta_all_all %>%
   mutate(point_shape = ifelse(as.character(substudy_num) %in% shape_mapping, 22, 16))
