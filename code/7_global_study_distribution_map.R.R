@@ -33,55 +33,44 @@ world <- ne_countries(scale = "medium", returnclass = "sf") %>%
   st_transform(crs = 4326)
 
 # ----------------------------------------------------------------------------
-# 4. Build publication‐quality map
+# 4. Build publication‐quality map (large = deep purple, size legend reversed)
 # ----------------------------------------------------------------------------
 p_map <- ggplot() +
-  # draw land
-  geom_sf(data = world,
-          fill  = "white",
-          color = "grey80",
-          size  = 0.2) +
-  # overlay study‐site bubbles
+  # land
+  geom_sf(data = world, fill = "white", color = "grey80", size = 0.2) +
+  # study bubbles
   geom_sf(data = spots,
           aes(size = n_studies, fill = n_studies),
           shape = 21, color = "black", stroke = 0.5, alpha = 0.8) +
-  # combined size & color legend
+  # size legend: largest circle on top
   scale_size_continuous(
     name  = "Number of Studies",
-    range = c(2, 10)
+    range = c(2, 10),
+    guide = guide_legend(
+      title.position = "top",
+      reverse        = TRUE
+    )
   ) +
+  # fill legend: light yellow→deep purple
   scale_fill_viridis_c(
-    option = "plasma",
-    name   = "Number of Studies"
+    option    = "magma",
+    direction = 1,
+    name      = "Number of Studies",
+    guide     = guide_colorbar(title.position = "top")
   ) +
-  # add a scale bar (bottom left)
-  annotation_scale(
-    location   = "bl",
-    width_hint = 0.2,
-    text_cex   = 0.7,
-    line_width = 0.5
-  ) +
-  # add a north arrow (top right)
-  annotation_north_arrow(
-    location    = "tr",
-    which_north = "true",
-    pad_x       = unit(0.5, "cm"),
-    pad_y       = unit(0.5, "cm"),
-    style       = north_arrow_fancy_orienteering
-  ) +
-  # fix aspect, set global extent
-  coord_sf(
-    xlim   = c(-180, 180),
-    ylim   = c(-60, 85),
-    expand = FALSE
-  ) +
-  # axis labels & title
+  # scale bar & north arrow
+  annotation_scale(location = "bl", width_hint = 0.2, text_cex = 0.7, line_width = 0.5) +
+  annotation_north_arrow(location = "tr", which_north = "true",
+                         pad_x = unit(0.5, "cm"), pad_y = unit(0.5, "cm"),
+                         style = north_arrow_fancy_orienteering) +
+  # global extent
+  coord_sf(xlim = c(-180, 180), ylim = c(-60, 85), expand = FALSE) +
+  # labels & theme
   labs(
     title = "Global Distribution of Density-Dependence Studies",
     x     = "Longitude",
     y     = "Latitude"
   ) +
-  # clean, white background theme
   theme_minimal(base_size = 14) +
   theme(
     panel.background   = element_rect(fill = "white", color = NA),
@@ -91,21 +80,16 @@ p_map <- ggplot() +
     axis.text          = element_text(color = "black"),
     axis.title         = element_text(face = "bold"),
     plot.title         = element_text(face = "bold", hjust = 0.5),
-    legend.position    = "right"
+    legend.position    = "right",
+    legend.title.align = 0.5
   )
 
-# ----------------------------------------------------------------------------
-# 5. Render & Save
-# ----------------------------------------------------------------------------
 print(p_map)
 
-# standard name
 ggsave(
-  filename = here::here("figures", "global_study_distribution_map.png"),
-  plot     = p_map,
-  width    = 10,
-  height   = 6,
-  units    = "in",
-  dpi      = 300,
-  bg       = "white"
+  here::here("figures", "global_study_distribution_map.png"),
+  plot   = p_map,
+  width  = 10, height = 6,
+  units  = "in", dpi = 300,
+  bg     = "white"
 )
