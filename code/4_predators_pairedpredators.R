@@ -234,71 +234,96 @@ ggsave(
 )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 8. Paired‐vs‐unpaired study plot
-# ──────────────────────────────────────────────────────────────────────────────
-all_pred         <- model_data %>%
-  mutate(
-    predators            = factor(predators, levels = c("absent", "present")),
-    paired_substudy_num  = factor(paired_substudy_num)
-  )
-paired_studies   <- all_pred %>% filter(paired_pred == "paired")
-unpaired_studies <- all_pred %>% filter(paired_pred != "paired")
+# ──────────────────────────────────────────────────────────────────────
+# 8. Paired‐vs‐unpaired study plot (revised styling)
+# ──────────────────────────────────────────────────────────────────────
 
-paired_cols <- setNames(
-  colorRampPalette(c("#D55E00", "#009E73"))(
-    nlevels(paired_studies$paired_substudy_num)
-  ),
-  levels(paired_studies$paired_substudy_num)
-)
+library(ggplot2)
+library(scales)   # for alpha()
+
+# unpaired_studies and paired_studies already exist from above
+# paired_cols is your named vector of colors by paired_substudy_num
+
+# create a semi‐transparent fill vector for paired points
+paired_fill <- setNames(alpha(paired_cols, 0.7), names(paired_cols))
 
 p2 <- ggplot() +
-  geom_jitter(
-    data = unpaired_studies,
-    aes(predators, sinh(betanls2_asinh), fill = predators),
-    shape = 21, width = 0.1, size = 2.5, color = "#1E3A5F"
+  # 0) Zero reference line
+  geom_hline(
+    yintercept = 0,
+    linetype   = "dashed",
+    color      = "darkgray",
+    size       = 0.8
   ) +
+  # 1) Unpaired studies: light gray bubbles
+  geom_jitter(
+    data   = unpaired_studies,
+    aes(x = predators, y = sinh(betanls2_asinh)),
+    shape  = 21, width = 0.1, size = 2.5,
+    fill   = "gray85", color = "gray50",
+    stroke = 0.6, alpha = 0.8
+  ) +
+  # 2) Paired studies: colored connecting lines
   geom_path(
-    data = paired_studies,
+    data   = paired_studies,
     aes(
-      predators, sinh(betanls2_asinh),
-      group = paired_substudy_num, color = paired_substudy_num
+      x     = predators,
+      y     = sinh(betanls2_asinh),
+      group = paired_substudy_num,
+      color = paired_substudy_num
     ),
     size = 1
   ) +
+  # 3) Paired study points: semi‐opaque fill + black outline
   geom_point(
-    data = paired_studies,
-    aes(predators, sinh(betanls2_asinh), color = paired_substudy_num),
-    shape = 21, size = 3, fill = "white"
+    data   = paired_studies,
+    aes(
+      x    = predators,
+      y    = sinh(betanls2_asinh),
+      fill = paired_substudy_num
+    ),
+    shape  = 21, size = 2,
+    color  = "black", stroke = 0.8
   ) +
+  # 4) Meta‐prediction CIs: thick black bars with caps
   geom_errorbar(
-    data = new_pred,
-    aes(predators, beta_hat, ymin = ci_lo, ymax = ci_hi),
-    width = 0.05, size = 1, color = "#1E3A5F"
+    data    = new_pred,
+    aes(
+      x    = predators,
+      y    = beta_hat,
+      ymin = ci_lo,
+      ymax = ci_hi
+    ),
+    width   = 0.15,
+    size    = 1,
+    color   = "black",
+    lineend = "round"
   ) +
+  # 5) Meta‐prediction points: large diamond, bold outline
   geom_point(
-    data = new_pred,
-    aes(predators, beta_hat),
-    shape = 18, size = 5, color = "#1E3A5F"
+    data   = new_pred,
+    aes(x = predators, y = beta_hat),
+    shape  = 23, size = 4,
+    fill   = "#1E3A5F",  # or your chosen color
+    color  = "black", stroke = 1.2
   ) +
-  scale_color_manual(values = paired_cols) +
-  scale_fill_manual(values = c(absent = "white", present = "#4682B4")) +
-  scale_x_discrete(labels = c("Absent", "Present")) + 
+  # scales for paired studies
+  scale_color_manual(values = paired_cols, guide = "none") +
+  scale_fill_manual(values = paired_fill, guide = "none") +
+  # axes
+  scale_x_discrete(labels = c("Absent", "Present")) +
   scale_y_continuous(
     trans  = "asinh",
     breaks = c(-1000, -100, -10, -1, 0, 1, 10, 100, 1000)
   ) +
+  # proper axis labels
   labs(
-    x = "Predators",
+    x = "Predator Presence",
     y = expression(
       paste(
         "Strength of density-dependent mortality, ",
         beta,
-        " (", 
-        cm^2,   # cm²
-        ~ fish^-1, 
-        ~ day^-1,
-        ")"
+        " (", cm^2, ~ fish^-1, ~ day^-1, ")"
       )
     )
   ) +
@@ -309,5 +334,8 @@ print(p2)
 
 ggsave(
   here::here("figures", "Fig4_paired_vs_unpaired.png"),
-  plot = p2, width = 6, height = 6, dpi = 300
+  plot   = p2,
+  width  = 6, height = 6,
+  dpi    = 300,
+  bg     = "white"
 )

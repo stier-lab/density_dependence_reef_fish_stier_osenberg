@@ -522,25 +522,52 @@ palette_darjeeling9 <- wes_palette(
   n    = length(family_phylo_order)
 )
 
-# 4) Draw the plot
-p_sp_darjeeling <- ggplot() +
-  # species‐level point estimates
-  geom_point(
-    data    = sp_coefs,
-    aes(x = beta_est, y = g_sp, colour = family),
-    shape = 17, size = 4
+# ──────────────────────────────────────────────────────────────────────
+# After you’ve built all2, sp_coefs, family_order & species_order…
+# Use RColorBrewer Paired palette with yellow removed and legend reversed
+# ──────────────────────────────────────────────────────────────────────
+library(ggplot2)
+library(dplyr)
+library(RColorBrewer)
+
+# 1) Lock your species factor so the y‐axis follows species_order
+sp_coefs <- sp_coefs %>%
+  mutate(g_sp = factor(g_sp, levels = species_order))
+all2 <- all2 %>%
+  mutate(g_sp = factor(g_sp, levels = species_order))
+
+# 2) Extract the families in the order they appear on the y‐axis
+legend_family_order <- sp_coefs %>%
+  arrange(g_sp) %>%
+  pull(family) %>%
+  unique()
+
+# 3) Grab the Paired palette (12 colours), drop the yellow, then take as many as you need
+raw_paired <- brewer.pal(12, "Paired")
+# "#FFFF99" is the yellow in that palette
+paired_no_yellow <- raw_paired[ raw_paired != "#FFFF99" ]
+qual_cols <- paired_no_yellow[1:length(legend_family_order)]
+names(qual_cols) <- legend_family_order
+
+# 4) Build the plot: raw dots → CIs → means
+p_sp_clean <- ggplot() +
+  # a) raw sub‐study points behind
+  geom_jitter(
+    data    = all2,
+    aes(x = beta_raw, y = g_sp, colour = family),
+    width   = 0.2, height = 0, size = 2, alpha = 0.5
   ) +
-  # species‐level CIs
+  # b) species‐level confidence intervals
   geom_errorbarh(
     data    = sp_coefs,
     aes(y = g_sp, xmin = ci.lb, xmax = ci.ub, colour = family),
     height = 0, size = 0.8
   ) +
-  # raw sub‐study dots
-  geom_jitter(
-    data    = all2,
-    aes(x = beta_raw, y = g_sp, colour = family),
-    width   = 0.2, height = 0, size = 2, alpha = 0.5
+  # c) species‐level mean triangles on top
+  geom_point(
+    data    = sp_coefs,
+    aes(x = beta_est, y = g_sp, colour = family),
+    shape = 17, size = 4
   ) +
   # vertical zero line
   geom_vline(xintercept = 0, linetype = "dashed", colour = "black") +
@@ -550,19 +577,18 @@ p_sp_darjeeling <- ggplot() +
     breaks = c(-1000, -100, -10, -1, 0, 1, 10, 100, 1000, 10000),
     labels = scales::comma
   ) +
-  # italic y‐axis labels (no underscores)
+  # italic species names on y‐axis
   scale_y_discrete(
-    labels = function(x) {
-      txt <- gsub("_", "~", x)
-      parse(text = paste0("italic(", txt, ")"))
-    }
+    labels = function(x) parse(text = paste0("italic(", gsub("_","~",x), ")"))
   ) +
-  # continuous Darjeeling1 palette + phylo legend order
+  # manual Paired palette (no yellow) + enforce legend order
   scale_colour_manual(
-    values = palette_darjeeling9,
-    breaks = family_phylo_order,
+    values = qual_cols,
+    limits = legend_family_order,
     name   = "Fish Family"
   ) +
+  # reverse legend so it matches top→bottom of the plot
+  guides(colour = guide_legend(reverse = TRUE)) +
   labs(
     x = expression(
       paste(
@@ -582,13 +608,12 @@ p_sp_darjeeling <- ggplot() +
   )
 
 # 5) Render & save
-print(p_sp_darjeeling)
+print(p_sp_clean)
 
 ggsave(
-  "figures/Figure3_species_by_family_order_beta_darjeeling9.png",
-  p_sp_darjeeling,
+  "figures/Figure3_species_by_family_order_beta_clean.png",
+  plot  = p_sp_clean,
   width = 10, height = 8,
-  units = "in",
-  dpi   = 300,
+  units = "in", dpi = 300,
   bg    = "white"
 )
