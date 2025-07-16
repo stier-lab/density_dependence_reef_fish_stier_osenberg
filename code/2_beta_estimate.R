@@ -61,6 +61,7 @@ fixed_effect      <- fixed_effect_results %>% filter(component == "fixed_effect"
 back_transformed_coef       <- fixed_effect$estimate
 back_transformed_conf_lower <- fixed_effect$ci_lower
 back_transformed_conf_upper <- fixed_effect$ci_upper
+
 # ----------------------------------------------------------------------------
 # 4. Extract and back-transform variance components
 # ----------------------------------------------------------------------------
@@ -236,8 +237,16 @@ predicted_data <- final_data %>%
   mutate(predicted_recruits = bh_f(alpha, beta, t, settler_range))
 
 facet_labels <- final_data %>%
-  mutate(genus_species = gsub("_", " ", genus_species),
-         facet_label = paste0("*", genus_species, "*\nBeta: ", round(beta * 1e4, 0))) %>%
+  mutate(
+    genus_species = gsub("_", " ", genus_species),
+    facet_label   = paste0(
+      "*", genus_species, "*\n",      # your italicized species
+      " *β* ",                         # space before & after β
+      "= ", 
+      round(beta * 1e4, 0), 
+      " "                              # trailing space if you still want one
+    )
+  ) %>%
   distinct(substudy_num, facet_label)
 
 beverton_holt_plot <- ggplot() +
@@ -320,14 +329,14 @@ orchard_manual <- ggplot(beta_all_all, aes(
   geom_vline(xintercept = 0, linetype = "solid",
              color = "black", linewidth = 1) +
   labs(
-    x = expression(
+    y = expression(
       paste(
         "Strength of density-dependent mortality, ",
         beta,
         " (", cm^2, ~ fish^-1, ~ day^-1, ")"
       )
     ),
-    y = NULL,
+    X = NULL,
     size = "Precision (1/SE)"
   ) +
   theme_minimal(base_size = 16) +
@@ -380,5 +389,7 @@ ggsave(
   width    = 10,
   height   = 11,
   units    = "in",
-  dpi      = 300
+  dpi      = 300,
+  device   = cairo_pdf,    # <— use Cairo
+  bg       = "white"
 )

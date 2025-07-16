@@ -128,39 +128,79 @@ ggplot2::ggsave(
   width    = 8, height = 8, dpi = 300
 )
 
+
 # ----------------------------------------------------------------------------
-# 5. Phylogenetic signal tests
+# 5. Phylogenetic signal tests (with parametric bootstrap CI for observed K)
 # ----------------------------------------------------------------------------
 
+# 5.1 Prepare trait vector named by species
 betavec <- beta_plot_df$mean
 names(betavec) <- beta_plot_df$g_sp
 
-# only keep the species that appear in both the tree and your estimates:
+# 5.2 Keep only species present in both tree and data
 common_sp <- intersect(pruned_tree$tip.label, names(betavec))
+betavec   <- betavec[common_sp]
+pruned_tree <- ape::drop.tip(
+  pruned_tree,
+  setdiff(pruned_tree$tip.label, common_sp)
+)
 
-# subset and reorder
-betavec <- betavec[common_sp]
-pruned_tree <- ape::drop.tip(pruned_tree,
-                             setdiff(pruned_tree$tip.label, common_sp))
+# 5.3 Pagel's λ test (likelihood‐ratio against λ = 0)
+lambda_res <- phytools::phylosig(
+  pruned_tree, betavec,
+  method = "lambda", test = TRUE
+)
 
-lambda_res <- phytools::phylosig(pruned_tree, betavec,
-                                 method = "lambda", test = TRUE)
-k_res      <- phytools::phylosig(pruned_tree, betavec,
-                                 method = "K",      test = TRUE)
+# 5.4 Observed Blomberg's K + permutation p-value
+k_test <- phytools::phylosig(
+  pruned_tree, betavec,
+  method = "K", test = TRUE
+)
 
+plot(k_test)
 
-# bootstrap 95% CI for Blomberg's K
+k_obs  <- k_test$K      # your observed K
+k_pval <- k_test$P      # permutation p-value
 
+# ----------------------------------------------------------------------------
+# 5.5 Parametric bootstrap under a BM model (σ² estimated from your data)
+# ----------------------------------------------------------------------------
+library(geiger)
+
+# 1) Fit BM to get σ²̂
+bm_fit     <- geiger::fitContinuous(pruned_tree, betavec, model = "BM")
+sigma2_hat <- bm_fit$opt$sigsq
+# sigma2_hat is our MLE of σ² (rate of trait evolution)
+
+# 2) Bootstrap K under BM(σ²̂)
 nsim   <- 500
 boot_K <- numeric(nsim)
 
-for(i in seq_len(nsim)) {
-  sim_trait   <- rTraitCont(pruned_tree)
-  boot_K[i]   <- phylosig(pruned_tree, sim_trait, method="K", test=FALSE)
+for (i in seq_len(nsim)) {
+  sim_trait <- rTraitCont(pruned_tree, sigma = sqrt(sigma2_hat))
+  boot_K[i] <- phytools::phylosig(
+    pruned_tree, sim_trait,
+    method = "K", test = FALSE
+  )
 }
 
-ci_K <- quantile(boot_K, c(0.025, 0.975))
-ci_K
+# 3) 95% CI around the observed K
+ci_K_obs <- quantile(boot_K, probs = c(0.025, 0.975))
+
+# ----------------------------------------------------------------------------
+# 5.6 Report results
+# ----------------------------------------------------------------------------
+cat("Pagel's λ:\n")
+print(lambda_res)
+
+cat("\nBlomberg's K:\n",
+    "  Observed K     =", round(k_obs, 3), "\n",
+    "  Permutation p =", signif(k_pval, 3), "\n")
+
+cat("\n95% CI for K (parametric bootstrap):\n")
+print(ci_K_obs)
+
+
 
 
 # ----------------------------------------------------------------------------
@@ -372,11 +412,11 @@ palette_darjeeling9 <- wes_palette("Darjeeling1",
 
 # 2) Re-draw your plot with that palette
 p_sp_darjeeling <- ggplot() +
-  # raw sub‐study dots
-  geom_jitter(
-    data    = all2,
-    aes(x = beta_raw, y = g_sp, colour = family),
-    width   = 0.2, height = 0, size = 2, alpha = 0.5
+  # species‐level point estimates
+  geom_point(
+    data    = sp_coefs,
+    aes(x = beta_est, y = g_sp, colour = family),
+    shape = 17, size = 4
   ) +
   # species‐level CIs
   geom_errorbarh(
@@ -384,12 +424,14 @@ p_sp_darjeeling <- ggplot() +
     aes(y = g_sp, xmin = ci.lb, xmax = ci.ub, colour = family),
     height = 0, size = 0.8
   ) +
-  # species‐level point estimates
-  geom_point(
-    data    = sp_coefs,
-    aes(x = beta_est, y = g_sp, colour = family),
-    shape = 17, size = 4
+  # raw sub‐study dots
+  geom_jitter(
+    data    = all2,
+    aes(x = beta_raw, y = g_sp, colour = family),
+    width   = 0.2, height = 0, size = 2, alpha = 0.5
   ) +
+  
+  
   # vertical zero line
   geom_vline(xintercept = 0, linetype = "dashed", colour = "black") +
   # asinh x‐axis
@@ -440,3 +482,113 @@ ggsave("figures/Figure3_species_by_family_order_beta_darjeeling9.png",
        p_sp_darjeeling,
        width = 10, height = 8,
        units = "in", dpi = 300,bg = "white")
+
+
+
+#alternative ordering 
+
+# ──────────────────────────────────────────────────────────────────────
+# After you’ve built all2, sp_coefs, family_order & species_order…
+# Phylogenetic reordering + continuous Darjeeling1 palette
+# ──────────────────────────────────────────────────────────────────────
+library(ggplot2)
+library(dplyr)
+library(wesanderson)
+
+# 1) Define the phylogenetic family order
+family_phylo_order <- c(
+  "Embiotocidae",  # perches
+  "Plesiopidae",   # longfins
+  "Pomacentridae", # damselfishes
+  "Gobiidae",      # gobies
+  "Serranidae",    # groupers
+  "Sparidae",      # porgies
+  "Cottidae",      # sculpins
+  "Sebastidae",    # rockfishes
+  "Labridae"       # wrasses
+)
+
+# 2) Re‐level your factor in both data frames
+sp_coefs <- sp_coefs %>%
+  mutate(family = factor(family, levels = family_phylo_order))
+
+all2 <- all2 %>%
+  mutate(family = factor(family, levels = family_phylo_order))
+
+# 3) Grab a continuous 9‐colour Darjeeling1 ramp
+palette_darjeeling9 <- wes_palette(
+  name = "Darjeeling1",
+  type = "continuous",
+  n    = length(family_phylo_order)
+)
+
+# 4) Draw the plot
+p_sp_darjeeling <- ggplot() +
+  # species‐level point estimates
+  geom_point(
+    data    = sp_coefs,
+    aes(x = beta_est, y = g_sp, colour = family),
+    shape = 17, size = 4
+  ) +
+  # species‐level CIs
+  geom_errorbarh(
+    data    = sp_coefs,
+    aes(y = g_sp, xmin = ci.lb, xmax = ci.ub, colour = family),
+    height = 0, size = 0.8
+  ) +
+  # raw sub‐study dots
+  geom_jitter(
+    data    = all2,
+    aes(x = beta_raw, y = g_sp, colour = family),
+    width   = 0.2, height = 0, size = 2, alpha = 0.5
+  ) +
+  # vertical zero line
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "black") +
+  # asinh x‐axis
+  scale_x_continuous(
+    trans  = "asinh",
+    breaks = c(-1000, -100, -10, -1, 0, 1, 10, 100, 1000, 10000),
+    labels = scales::comma
+  ) +
+  # italic y‐axis labels (no underscores)
+  scale_y_discrete(
+    labels = function(x) {
+      txt <- gsub("_", "~", x)
+      parse(text = paste0("italic(", txt, ")"))
+    }
+  ) +
+  # continuous Darjeeling1 palette + phylo legend order
+  scale_colour_manual(
+    values = palette_darjeeling9,
+    breaks = family_phylo_order,
+    name   = "Fish Family"
+  ) +
+  labs(
+    x = expression(
+      paste(
+        "Strength of density-dependent mortality, ",
+        beta,
+        " (", cm^2, ~ fish^-1, ~ day^-1, ")"
+      )
+    ),
+    y = NULL
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.y        = element_text(size = 10),
+    axis.title.x       = element_text(size = 12, face = "bold"),
+    legend.position    = "right",
+    panel.grid.major.x = element_line(color = "gray90", linetype = "dotted")
+  )
+
+# 5) Render & save
+print(p_sp_darjeeling)
+
+ggsave(
+  "figures/Figure3_species_by_family_order_beta_darjeeling9.png",
+  p_sp_darjeeling,
+  width = 10, height = 8,
+  units = "in",
+  dpi   = 300,
+  bg    = "white"
+)
