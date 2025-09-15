@@ -1,115 +1,88 @@
-###############################################################################
-# File: 2_estimate_beta_effect.R
-# Purpose: Fit mixed-effects meta-analysis on effect sizes, back-transform estimates
-# Author: Adrian Stier
-# Date: 2025-07-09
-###############################################################################
+# ==============================================================================
+# File: 8_sensitivity_core_beta.R
+# Title: Core β Diagnostics — matches 2_estimate_beta_effect.R variance usage
+# Author: Stier Lab (Adrian C. Stier), with assistant support
+# Date: 2025-09-15
+#
+# PURPOSE
+#   Run reviewer-focused diagnostics for the core mixed-effects meta-analysis:
+#     • Heterogeneity (tau^2, sigma^2, QE/QEp, pseudo-I^2)
+#     • Leave-one-out (CSV + plot)
+#     • Influence diagnostics (Cook’s D, hat, max|DFBETAS| + plot)
+#     • Small-study effects: funnel plot + Egger test (trim-and-fill to SI)
+#
+# MODEL (identical inputs to 2_estimate_beta_effect.R)
+#   yi = betanls2_asinh
+#   V  = betanlsvar_asinh          # (sampling variance in the asinh space)
+#   random = ~ 1 | study_num/substudy_num
+#
+# OUTPUTS
+#   figs/sensitivity_core_beta/baseline_beta/
+#       funnel.(png|pdf), influence.(png|pdf), leave_one_out.(png|pdf)
+#   tables/sensitivity_core_beta/baseline_beta/
+#       heterogeneity.csv, egger_test.csv, trimfill_SI.csv,
+#       influence_metrics.csv, leave_one_out.csv, variance_diagnostics.csv,
+#       intercept_backtransform.csv, sessionInfo_baseline_beta.txt
+# ==============================================================================
 
-# ----------------------------------------------------------------------------
-# 1. Setup & Preprocessing
-# ----------------------------------------------------------------------------
-source(here::here("code", "1_data_phylogeny_loading.R"))  # Load all_dat2
-# Filter out incomplete cases for model fitting
-model_data <- all_dat2 %>%
-  dplyr::filter(
-    !is.na(study_num),
-    !is.na(substudy_num),
-    !is.na(betanls2_asinh),
-    !is.na(betanlsvar_asinh)
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(readr); library(tibble)
+  library(ggplot2); library(forcats); library(broom); library(janitor)
+  library(metafor); library(clubSandwich)
+  library(here)
+})
+
+# ---------------------------- Paths & Helpers ---------------------------------
+ROOT_FIG <- "figs/sensitivity_core_beta"
+ROOT_TAB <- "tables/sensitivity_core_beta"
+dir.create(ROOT_FIG, recursive = TRUE, showWarnings = FALSE)
+dir.create(ROOT_TAB, recursive = TRUE, showWarnings = FALSE)
+
+mk_dirs <- function(label) {
+  fig_dir <- file.path(ROOT_FIG, label); dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+  tab_dir <- file.path(ROOT_TAB, label); dir.create(tab_dir, recursive = TRUE, showWarnings = FALSE)
+  list(fig = fig_dir, tab = tab_dir)
+}
+
+# Publication-quality saving: PNG + vector PDF
+save_plot_dual <- function(plot, outfile_base, width=7, height=5, dpi=400, bg="white") {
+  ggplot2::ggsave(paste0(outfile_base, ".png"), plot, width=width, height=height, dpi=dpi, bg=bg)
+  ggplot2::ggsave(paste0(outfile_base, ".pdf"), plot, width=width, height=height,
+                  dpi=600, bg=bg, device = cairo_pdf)
+}
+
+theme_pub <- function(base_size = 12) {
+  theme_bw(base_size = base_size) +
+    theme(
+      panel.grid.major = element_line(color = "grey90", linewidth = 0.3),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold"),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "none"
+    )
+}
+
+# Conservative variance floor, used only for fitting/plots (raw V untouched)
+compute_vi_floor <- function(v) {
+  pos <- v[is.finite(v) & v > 0]
+  if (!length(pos)) return(NA_real_)
+  max(1e-12,
+      min(min(pos, na.rm=TRUE) * 1e-3,
+          stats::quantile(pos, probs = 0.005, na.rm = TRUE, names = FALSE)))
+}
+
+with_v_fit <- function(dat, vi_col = "betanlsvar_asinh") {
+  v_raw <- dat[[vi_col]]
+  floor_val <- compute_vi_floor(v_raw)
+  dat %>% mutate(
+    v_fit   = if (!is.na(floor_val)) pmax(.data[[vi_col]], floor_val) else .data[[vi_col]],
+    v_floor = floor_val
   )
+}
 
-# ----------------------------------------------------------------------------
-# 2. Fit mixed-effects model
-# ----------------------------------------------------------------------------
-# Random effects: study nested within substudy
-meta_model <- metafor::rma.mv(
-  yi     = betanls2_asinh,
-  V      = betanlsvar_asinh,
-  random = list(~1 | study_num/substudy_num),
-  data   = model_data,
-  method = "REML",
-  test   = "t"
-)
-
-# ----------------------------------------------------------------------------
-# 3. Extract fixed-effect results and back-transform
-# ----------------------------------------------------------------------------
-coef_df <- coef(summary(meta_model)) %>%
-  as.data.frame() %>%
-  tibble::rownames_to_column(var = "term") %>%
-  dplyr::select(term, estimate, ci.lb, ci.ub)
-
-# Inverse asinh transformation
-inv_asinh <- function(x) sinh(x)
-
-fixed_effect_results <- coef_df %>%
-  dplyr::filter(term == "intrcpt") %>%
-  dplyr::transmute(
-    component     = "fixed_effect",
-    estimate_asinh = estimate,
-    ci_lb_asinh    = ci.lb,
-    ci_ub_asinh    = ci.ub,
-    estimate       = inv_asinh(estimate),
-    ci_lower       = inv_asinh(ci.lb),
-    ci_upper       = inv_asinh(ci.ub)
-  )
-
-# --- after you create fixed_effect_results ---
-
-# grab the back‐transformed intercept and CIs
-fixed_effect      <- fixed_effect_results %>% filter(component == "fixed_effect")
-back_transformed_coef       <- fixed_effect$estimate
-back_transformed_conf_lower <- fixed_effect$ci_lower
-back_transformed_conf_upper <- fixed_effect$ci_upper
-
-# ----------------------------------------------------------------------------
-# 4. Extract and back-transform variance components
-# ----------------------------------------------------------------------------
-var_comps <- summary(meta_model)$sigma2
-names(var_comps) <- c("study", "substudy")
-
-variance_results <- tibble::enframe(var_comps, name = "component", value = "var_asinh") %>%
-  dplyr::mutate(
-    sd_asinh = sqrt(var_asinh),
-    estimate = sinh(sd_asinh)^2,
-    ci_lower = NA_real_,
-    ci_upper = NA_real_
-  ) %>%
-  dplyr::select(component, estimate, ci_lower, ci_upper)
-
-# ----------------------------------------------------------------------------
-# 5. Compile & Save Results
-# ----------------------------------------------------------------------------
-results_summary <- dplyr::bind_rows(fixed_effect_results, variance_results)
-
-# Display summary
-print(results_summary)
-
-# Optional: save to CSV
-# readr::write_csv(results_summary, here::here("results", "beta_meta_summary.csv"))
-
-# End of 2_estimate_beta_effect.R 
-
-
-###############################################################################
-# File: 2_estimate_beta_effect.R
-# Purpose:
-#   1. Fit mixed-effects meta-analysis on effect sizes (asinh-transformed β)
-#   2. Back-transform estimates
-#   3. Produce an Orchard + Beverton-Holt combined figure (Step 6)
-# Author: Adrian Stier
-# Date:   2025-07-09 (rev. 2025-07-10)
-###############################################################################
-
-# ----------------------------------------------------------------------------
-# 1. Setup & Preprocessing
-# ----------------------------------------------------------------------------
-library(dplyr)
-library(tibble)
-library(metafor)
-library(here)
-
-source(here("code", "1_data_phylogeny_loading.R"))  # loads all_dat2
+# ---------------------------- Load analysis data ------------------------------
+# Must match 2_estimate_beta_effect.R
+source(here::here("code", "1_data_phylogeny_loading.R"))  # loads all_dat2
 
 model_data <- all_dat2 %>%
   filter(
@@ -117,279 +90,156 @@ model_data <- all_dat2 %>%
     !is.na(substudy_num),
     !is.na(betanls2_asinh),
     !is.na(betanlsvar_asinh)
-  )
+  ) %>%
+  # add v_fit used for *fitting and bias plots only*
+  with_v_fit("betanlsvar_asinh")
 
-# ----------------------------------------------------------------------------
-# 2. Fit mixed-effects model
-# ----------------------------------------------------------------------------
-meta_model <- rma.mv(
-  yi     = betanls2_asinh,
-  V      = betanlsvar_asinh,
-  random = list(~1 | study_num/substudy_num),
-  data   = model_data,
-  method = "REML",
-  test   = "t"
+# ----------------------------- Fit core model ---------------------------------
+fit_core <- tryCatch(
+  metafor::rma.mv(
+    yi     = betanls2_asinh,
+    V      = v_fit,                       # stays in asinh space (variance)
+    random = list(~ 1 | study_num/substudy_num),
+    data   = model_data,
+    method = "REML",
+    test   = "t"
+  ),
+  error = function(e) { message("Core fit failed: ", e$message); NULL }
 )
 
-# ----------------------------------------------------------------------------
-# 3. Extract fixed-effect results and back-transform
-# ----------------------------------------------------------------------------
-coef_df <- coef(summary(meta_model)) %>%
-  as.data.frame() %>%
-  rownames_to_column("term") %>%
-  select(term, estimate, ci.lb, ci.ub)
-
+# Back-transform fixed intercept (context only, not used in diagnostics)
 inv_asinh <- function(x) sinh(x)
-
-fixed_effect_results <- coef_df %>%
-  filter(term == "intrcpt") %>%
-  transmute(
-    component       = "fixed_effect",
-    estimate_asinh  = estimate,
-    ci_lb_asinh     = ci.lb,
-    ci_ub_asinh     = ci.ub,
-    estimate        = inv_asinh(estimate),
-    ci_lower        = inv_asinh(ci.lb),
-    ci_upper        = inv_asinh(ci.ub)
-  )
-
-# ----------------------------------------------------------------------------
-# 4. Extract and back-transform variance components
-# ----------------------------------------------------------------------------
-var_comps <- summary(meta_model)$sigma2
-names(var_comps) <- c("study", "substudy")
-
-variance_results <- enframe(var_comps, name = "component", value = "var_asinh") %>%
-  mutate(
-    sd_asinh = sqrt(var_asinh),
-    estimate = sinh(sd_asinh)^2,
-    ci_lower = NA_real_,
-    ci_upper = NA_real_
-  ) %>%
-  select(component, estimate, ci_lower, ci_upper)
-
-# ----------------------------------------------------------------------------
-# 5. Compile & Save Results
-# ----------------------------------------------------------------------------
-results_summary <- bind_rows(fixed_effect_results, variance_results)
-print(results_summary)
-# readr::write_csv(results_summary, here("results", "beta_meta_summary.csv"))
-
-# ----------------------------------------------------------------------------
-# 6. Combined Orchard & Beverton-Holt Figure
-# ----------------------------------------------------------------------------
-
-# Load required packages for visualization
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-library(ggtext)
-library(ggbeeswarm)
-library(cowplot)
-
-# 6.1 Load and prepare Beverton-Holt data
-all_data         <- read.csv("data/all_studies_looped-2024-09-11.csv")
-combined_results <- read.csv("output/combined_results_2024-09-17.csv")
-covariates       <- read.csv("output/merged-covariates-10-21-24.csv")
-
-bh_f <- function(alpha, beta, t_days, x) {
-  (x * exp(-alpha * t_days)) / (1 + (beta * x * (1 - exp(-alpha * t_days)) / alpha))
+if (!is.null(fit_core)) {
+  cf <- coef(summary(fit_core))
+  intr <- as_tibble(cf, rownames = "term") %>%
+    filter(term == "intrcpt") %>%
+    transmute(
+      component        = "fixed_effect",
+      estimate_asinh   = estimate,
+      ci_lb_asinh      = ci.lb,
+      ci_ub_asinh      = ci.ub,
+      estimate         = inv_asinh(estimate),
+      ci_lower         = inv_asinh(ci.lb),
+      ci_upper         = inv_asinh(ci.ub)
+    )
+  # Save for SI / narrative
+  dirs <- mk_dirs("baseline_beta")
+  readr::write_csv(intr, file.path(dirs$tab, "intercept_backtransform.csv"))
 }
 
-usedf <- covariates %>%
-  filter(use_2024 == "yes", predators == "present") %>%
-  select(substudy_num, family, predators)
+# --------------------------- Heterogeneity table ------------------------------
+dirs <- mk_dirs("baseline_beta")
+fig_dir <- dirs$fig; tab_dir <- dirs$tab
 
-all_data    <- inner_join(all_data, usedf, by = "substudy_num")
-merged_data <- inner_join(all_data, combined_results, by = "substudy_num")
+if (!is.null(fit_core)) {
+  het <- tibble(
+    k            = nrow(model_data),
+    tau2_resid   = unname(fit_core$tau2),
+    QE           = unname(fit_core$QE),
+    QEp          = unname(fit_core$QEp),
+    sigma2       = paste(round(fit_core$sigma2, 6), collapse = ";"),
+    sigma2_names = paste(fit_core$s.names, collapse = ";"),
+    I2_overall   = suppressWarnings(tryCatch(metafor::i2(fit_core)$I2, error = function(e) NA_real_))
+  )
+  readr::write_csv(het, file.path(tab_dir, "heterogeneity.csv"))
+} else {
+  readr::write_csv(tibble(note="Intercept fit failed; heterogeneity unavailable."),
+                   file.path(tab_dir, "heterogeneity.csv"))
+}
 
-filtered_data <- merged_data %>%
-  group_by(substudy_num) %>%
-  filter(n() >= 10) %>%
-  ungroup() %>%
-  mutate(beta_strength = beta)
+# ----------------------- Variance diagnostics (SI transparency) ----------------
+vard <- tibble(
+  k        = nrow(model_data),
+  v_floor  = unique(model_data$v_floor),
+  V_min    = min(model_data$betanlsvar_asinh, na.rm=TRUE),
+  V_q05    = quantile(model_data$betanlsvar_asinh, 0.05, na.rm=TRUE),
+  V_med    = median(model_data$betanlsvar_asinh, na.rm=TRUE),
+  V_q95    = quantile(model_data$betanlsvar_asinh, 0.95, na.rm=TRUE),
+  V_max    = max(model_data$betanlsvar_asinh, na.rm=TRUE)
+)
+readr::write_csv(vard, file.path(tab_dir, "variance_diagnostics.csv"))
 
-beta_quantiles <- quantile(combined_results$beta,
-                           probs = c(0.10, 0.5, 0.75, 0.95),
-                           na.rm = TRUE)
-
-closest_values <- sapply(beta_quantiles, function(x) {
-  filtered_data$beta[which.min(abs(filtered_data$beta - x))]
-})
-
-matching_substudies <- filtered_data %>%
-  filter(beta %in% closest_values) %>%
-  distinct(substudy_num)
-
-final_data <- filtered_data %>%
-  filter(substudy_num %in% matching_substudies$substudy_num) %>%
-  arrange(beta)
-
-desired_order <- c(212, 249, 76, 256)
-final_data <- final_data %>%
-  filter(substudy_num %in% desired_order) %>%
-  mutate(substudy_num = factor(substudy_num, levels = desired_order))
-
-predicted_data <- final_data %>%
-  group_by(substudy_num) %>%
-  mutate(settler_range = list(seq(0, max(n0_m2, na.rm = TRUE), length.out = 100))) %>%
-  unnest(cols = c(settler_range)) %>%
-  mutate(predicted_recruits = bh_f(alpha, beta, t, settler_range))
-
-facet_labels <- final_data %>%
-  mutate(
-    genus_species = gsub("_", " ", genus_species),
-    facet_label   = paste0(
-      "*", genus_species, "*\n",      # your italicized species
-      " *β* ",                         # space before & after β
-      "= ", 
-      round(beta * 1e4, 0), 
-      " "                              # trailing space if you still want one
+# -------------------------- Influence diagnostics -----------------------------
+if (!is.null(fit_core)) {
+  cooks_cutoff <- 4 / max(5, nrow(model_data))
+  
+  infl <- tryCatch(metafor::influence.rma.mv(fit_core), error=function(e) NULL)
+  if (!is.null(infl)) {
+    inf_df <- tibble(
+      idx     = seq_along(infl$cook.d),
+      cooks_d = infl$cook.d,
+      hat     = infl$hat,
+      dfbetas = apply(infl$dfbs, 1, function(x) max(abs(x), na.rm = TRUE))
     )
-  ) %>%
-  distinct(substudy_num, facet_label)
+    readr::write_csv(inf_df, file.path(tab_dir, "influence_metrics.csv"))
+    
+    p_inf <- inf_df %>%
+      ggplot(aes(cooks_d, dfbetas)) +
+      geom_point(size = 1.8, alpha = .9) +
+      geom_vline(xintercept = cooks_cutoff, linetype = "dashed") +
+      labs(x = "Cook's distance", y = "max|DFBETAS|", title = "Influence diagnostics") +
+      theme_pub()
+    save_plot_dual(p_inf, file.path(fig_dir, "influence"))
+  }
+  
+  # ------------------------------ Leave-one-out -------------------------------
+  loo <- tryCatch(metafor::leave1out.rma.mv(fit_core), error=function(e) NULL)
+  if (!is.null(loo) && length(loo$estimate) == nrow(model_data)) {
+    loo_df <- tibble(idx = seq_along(loo$estimate),
+                     loo_est = as.numeric(loo$estimate))
+    readr::write_csv(loo_df, file.path(tab_dir, "leave_one_out.csv"))
+    
+    p_loo <- loo_df %>%
+      ggplot(aes(idx, loo_est)) +
+      geom_point(size = 1.6, alpha = .9) +
+      geom_hline(yintercept = as.numeric(fit_core$b), linetype = "dashed") +
+      labs(x = "Left-out index", y = expression(beta[asinh]),
+           title = "Leave-one-out β (asinh space)") +
+      theme_pub()
+    save_plot_dual(p_loo, file.path(fig_dir, "leave_one_out"))
+  }
+}
 
-beverton_holt_plot <- ggplot() +
-  geom_point(data = final_data, aes(x = n0_m2, y = nt_m2),
-             size = 3, alpha = 0.8, color = "#2C3E50",
-             position = position_jitter(width = 0.05, height = 0)) +
-  geom_line(data = predicted_data, aes(x = settler_range, y = predicted_recruits),
-            size = 1.5, color = "#E74C3C") +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#95A5A6", size = 1) +
-  facet_wrap(~substudy_num, ncol = 1, scales = "free",
-             labeller = labeller(substudy_num = setNames(facet_labels$facet_label, facet_labels$substudy_num))) +
-  labs(
-    x = expression(paste("Initial Density (Settlers per ", m^{-2}, ")")),
-    y = expression(paste("Final Density (Recruits per ", m^{-2}, ")"))
-  )+
-  theme_minimal(base_size = 14) +
-  theme(strip.text = element_markdown(size = 14, face = "bold"),
-        axis.text = element_text(size = 12, color = "#34495E"),
-        axis.title = element_text(size = 14, face = "bold"),
-        panel.grid.major = element_line(color = "gray90"),
-        panel.grid.minor = element_line(color = "gray95"),
-        panel.background = element_rect(fill = "white"))
-
-print(beverton_holt_plot)
-
-
-
-
-
-
-# 6.2 Prepare and draw Orchard plot manually
-precision_breaks <- c(1e-12, 1e4, 1e6, 1e8, 1e12)
-precision_labels <- c(expression(10^-12), expression(10^4), expression(10^6), expression(10^8), expression(10^12))
-
-global_estimate <- data.frame(
-  back_transformed_coef = back_transformed_coef,
-  y_position = "Beta"
+# ------------------------ Small-study effects (bias) --------------------------
+# NB: use rma.uni on the SAME effect/variance used above (asinh space with v_fit)
+uni <- tryCatch(
+  metafor::rma.uni(yi = betanls2_asinh, vi = v_fit, method = "REML", data = model_data),
+  error = function(e) NULL
 )
 
-shape_mapping <- c("212", "249", "76", "256")
+if (!is.null(uni)) {
+  # symmetric x-limits around 0 using 99th percentile of |yi|
+  xlim_max <- stats::quantile(abs(model_data$betanls2_asinh), probs = 0.99, na.rm = TRUE)
+  xlim_max <- max(1e-6, as.numeric(xlim_max))
+  xlim_use <- c(-xlim_max, xlim_max)
+  
+  # base metafor funnel (it draws CI wedges correctly), save PNG + PDF
+  png(file.path(fig_dir, "funnel.png"), width = 1800, height = 1400, res = 400, bg = "white")
+  par(mar = c(4.2, 4.2, 3.0, 1.0))
+  metafor::funnel(uni, main = "Funnel plot (asinh space)",
+                  xlim = xlim_use, refline = 0, shade = c("gray95", "gray90"))
+  dev.off()
+  
+  grDevices::cairo_pdf(file.path(fig_dir, "funnel.pdf"), width = 7, height = 5, family = "Helvetica")
+  par(mar = c(4.2, 4.2, 3.0, 1.0))
+  metafor::funnel(uni, main = "Funnel plot (asinh space)",
+                  xlim = xlim_use, refline = 0, shade = c("gray95", "gray90"))
+  dev.off()
+  
+  # Egger regression (small-study effects)
+  egger <- tryCatch(metafor::regtest(uni, model = "lm"), error=function(e) NULL)
+  if (!is.null(egger)) {
+    readr::write_csv(tibble(z = unname(egger$zval), p = unname(egger$pval)),
+                     file.path(tab_dir, "egger_test.csv"))
+  }
+  
+  # Trim-and-fill (to SI)
+  tf <- tryCatch(metafor::trimfill(uni), error = function(e) NULL)
+  if (!is.null(tf)) readr::write_csv(broom::tidy(tf), file.path(tab_dir, "trimfill_SI.csv"))
+}
 
+# ------------------------------- Session info ---------------------------------
+writeLines(capture.output(sessionInfo()),
+           con = file.path(tab_dir, "sessionInfo_baseline_beta.txt"))
 
-beta_all_all<-all_dat2%>%
-  select(beta_hat,
-         beta_variance_nls2,
-         study_num,
-         substudy_num,
-         betanlsvar_raw_cm,
-         betanls2_raw_cm,
-         betanls2_asinh,
-         betanlsvar_asinh)
-
-beta_all_all <- beta_all_all %>%
-  mutate(precision = 1 / beta_variance_nls2)
-
-
-beta_all_all <- beta_all_all %>%
-  mutate(point_shape = ifelse(as.character(substudy_num) %in% shape_mapping, 22, 16))
-
-orchard_manual <- ggplot(beta_all_all, aes(
-  x = betanls2_raw_cm,
-  y = "Beta",
-  size = sqrt(precision)
-)) +
-  geom_quasirandom(aes(alpha = precision),
-                   shape = 21, fill = "#377EB8", color = "#377EB8",
-                   width = 0.15, alpha = 0.7) +
-  geom_segment(aes(x = back_transformed_conf_lower,
-                   xend = back_transformed_conf_upper,
-                   y = "Beta", yend = "Beta"),
-               color = "black", linewidth = 1.2) +
-  geom_point(data = global_estimate,
-             aes(x = back_transformed_coef, y = y_position),
-             color = "black", size = 5, shape = 21,
-             fill = "#377EB8", stroke = 1.5) +
-  geom_hline(yintercept = 0, linetype = "dashed",
-             color = "black", linewidth = 1) +
-  geom_vline(xintercept = c(-100, -10, 0, 10, 100, 1000),
-             linetype = "dashed", color = "gray70", linewidth = 0.8) +
-  geom_vline(xintercept = 0, linetype = "solid",
-             color = "black", linewidth = 1) +
-  labs(
-    y = expression(
-      paste(
-        "Strength of density-dependent mortality, ",
-        beta,
-        " (", cm^2, ~ fish^-1, ~ day^-1, ")"
-      )
-    ),
-    X = NULL,
-    size = "Precision (1/SE)"
-  ) +
-  theme_minimal(base_size = 16) +
-  theme(
-    axis.title.y      = element_blank(),
-    legend.position   = c(0.85, 0.85),
-    legend.background = element_rect(fill = "white", color = "black"),
-    legend.key        = element_blank(),
-    axis.text         = element_text(size = 14),
-    axis.title.x      = element_text(size = 16, face = "bold"),
-    panel.grid.major  = element_line(color = "gray90"),
-    panel.grid.minor  = element_blank(),
-    panel.background  = element_rect(fill = "white")
-  ) +
-  scale_x_continuous(
-    trans  = "asinh",
-    limits = c(-500, 10000),
-    breaks = c(-500, -100, -10, -1, 0, 1, 10, 100, 1000, 2000, 10000)
-  ) +
-  scale_size_continuous(
-    name   = "Precision",
-    range  = c(3, 10),
-    breaks = sqrt(precision_breaks),
-    labels = precision_labels
-  ) +
-  guides(
-    size = guide_legend(
-      override.aes = list(
-        shape  = 16,
-        fill   = "#377EB8",
-        color  = "#377EB8",
-        stroke = 0
-      )
-    )
-  ) +
-  coord_flip()
-
-print(orchard_manual)
-
-
-# 6.3 Combine and save
-bplot2 <- plot_grid(orchard_manual, beverton_holt_plot,
-                    labels = c('A', 'B'), label_size = 12, ncol = 2,
-                    rel_heights = c(1, 2))
-print(bplot2)
-
-ggsave(
-  filename = here("figures", "figure1_orchard_bh_plot.pdf"),
-  plot     = bplot2,
-  width    = 10,
-  height   = 11,
-  units    = "in",
-  dpi      = 300,
-  device   = cairo_pdf,    # <— use Cairo
-  bg       = "white"
-)
+message("Core β diagnostics complete. See: ", ROOT_FIG, " / ", ROOT_TAB)
