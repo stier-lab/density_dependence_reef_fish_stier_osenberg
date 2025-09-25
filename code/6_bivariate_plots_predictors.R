@@ -245,7 +245,7 @@ p4 <- ggplot(df_size, aes(size_start, beta)) +
   geom_point(data = df, aes(size_start, betanls2_raw_cm),
              color = "#4682B4", alpha = 0.6, size = 1.5) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-  labs(x = "Initial Size (cm)", y = NULL) +
+  labs(x = "Initial Size (mm)", y = NULL) +
   scale_y_continuous(trans = "asinh",
                      breaks = c(-1000,-100,-10,-1,0,1,10,100,1000),
                      name = expression(
@@ -375,51 +375,53 @@ all_filtered <- all_dat2 %>%
   )
 
 # 8b. Plot: body size vs. β, facetted by species
+# 1) Global: pretty integer ticks (no decimals)
 p_body_size <- ggplot(all_filtered, aes(x = size_start, y = betanls2_raw_cm)) +
-  geom_point(
-    color = "black", fill = "steelblue", shape = 21, 
-    alpha = 0.6, size = 3
-  ) +
-  stat_smooth(
-    method = "lm", formula = y ~ x, 
-    se = FALSE, color = "black", size = 1
-  ) +
+  geom_point(color = "black", fill = "steelblue", shape = 21, alpha = 0.6, size = 3) +
+  stat_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "black", size = 1) +
   facet_wrap(~ g_sp, scales = "free", ncol = 4) +
-  
-  # match the other panels' y‐axis formatting
   scale_y_continuous(
     trans  = "asinh",
     breaks = c(-1000, -100, -10, -1, 0, 1, 10, 100, 1000),
-    labels = comma
+    labels = scales::comma
   ) +
-  
-  geom_hline(
-    yintercept = 0,
-    linetype   = "dashed",
-    color      = "gray"
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
+  scale_x_continuous(
+    limits = function(l) c(floor(l[1]), ceiling(l[2])),     # snap edges to integers
+    breaks = function(l) scales::breaks_pretty(n = 4)(l),   # ~3–4 ticks per facet
+    labels = scales::label_number(accuracy = 1)             # no decimals
   ) +
-  
-  # axis labels using expression()
   labs(
-    x = expression(paste(
-      "Initial Size (", mm, ")"
-    )),
-    y = expression(paste(
-      "Strength of density-dependent mortality, ",
-      beta,
-      " (", cm^2,  ~ fish^-1, ~ day^-1, ")"
-    ))
+    x = expression(paste("Initial Size (", mm, ")")),
+    y = expression(paste("Strength of density-dependent mortality, ",
+                         beta, " (", cm^2, ~ fish^-1, ~ day^-1, ")"))
   ) +
-  
   theme_classic(base_size = 10) +
   theme(
-    strip.text       = element_text(face = "italic", size = 8),
-    axis.title       = element_text(size = 12, face = "bold"),
-    axis.text        = element_text(size = 12),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    plot.margin      = margin(10, 10, 10, 10)
+    strip.text = element_text(face = "italic", size = 9),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text  = element_text(size = 11)
   )
+
+# 2) Panel-specific x-range WITHOUT extra packages:
+#    Add an invisible data row that forces the x-limits for that facet.
+pad_garnoti <- data.frame(
+  g_sp = "Halichoeres garnoti",
+  size_start = c(20, 23),           # desired limits
+  betanls2_raw_cm = 0               # any y within panel range
+)
+
+# (Add more pads the same way for other species if needed)
+# pad_partitus  <- data.frame(g_sp = "Stegastes partitus",  size_start = c(17, 20), betanls2_raw_cm = 0)
+# pad_elacatinus<- data.frame(g_sp = "Elacatinus sp.",      size_start = c(8, 20),  betanls2_raw_cm = 0)
+
+p_body_size_final <- p_body_size +
+  geom_blank(data = pad_garnoti, aes(size_start, betanls2_raw_cm))
+# + geom_blank(data = pad_partitus,  aes(size_start, betanls2_raw_cm))
+# + geom_blank(data = pad_elacatinus,aes(size_start, betanls2_raw_cm))
+
+print(p_body_size_final)
+
 
 ggsave(
   filename = here::here("figures", "body_size_by_species.png"),

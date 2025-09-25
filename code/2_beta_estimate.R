@@ -1,7 +1,7 @@
 # ==============================================================================
 # File: 8_sensitivity_core_beta.R
 # Title: Core β Diagnostics — matches 2_estimate_beta_effect.R variance usage
-# Author: Stier Lab (Adrian C. Stier), with assistant support
+# Author: Stier Lab (Adrian C. Stier)
 # Date: 2025-09-15
 #
 # PURPOSE
