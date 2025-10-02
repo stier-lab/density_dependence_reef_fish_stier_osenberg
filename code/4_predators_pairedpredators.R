@@ -187,6 +187,122 @@ comp_tbl %>%
   gt::gtsave(here::here("results", "predator_all_vs_paired.png"))
 
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 6b. Paired experiments: within-pair meta-analytic test of predators
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Defensive checks
+if (!all(c("paired_pred","paired_substudy_num","predators") %in% names(model_data))) {
+  stop("Expected columns 'paired_pred', 'paired_substudy_num', and 'predators' are missing in model_data.")
+}
+
+# Keep only experimental, paired rows; standardize predator labels
+paired_df <- model_data %>%
+  dplyr::filter(expt_obs == "Exp", paired_pred == "paired", !is.na(paired_substudy_num)) %>%
+  dplyr::mutate(
+    predators = tolower(trimws(predators)),
+    predators = dplyr::case_when(
+      predators %in% c("present","predator_present","with","yes") ~ "present",
+      predators %in% c("absent","control","without","no")         ~ "absent",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::filter(!is.na(predators)) %>%
+  dplyr::mutate(predators = factor(predators, levels = c("absent","present"))) %>%
+  droplevels()
+
+# Keep only those pairs that truly have BOTH predator levels
+paired_ids <- paired_df %>%
+  dplyr::distinct(paired_substudy_num, predators) %>%
+  dplyr::count(paired_substudy_num, name = "n_levels") %>%
+  dplyr::filter(n_levels == 2) %>%
+  dplyr::pull(paired_substudy_num)
+
+paired_df <- paired_df %>% dplyr::filter(paired_substudy_num %in% paired_ids)
+
+cat("# paired groups with BOTH levels: ", dplyr::n_distinct(paired_df$paired_substudy_num), "\n")
+
+# --- Fit within-pair meta-regression (predators effect is a within-pair contrast)
+m_paired_only <- metafor::rma.mv(
+  yi     = betanls2_asinh,
+  V      = betanlsvar_asinh,
+  mods   = ~ predators,                          # test predatorspresent
+  random = list(
+    ~ 1 | paired_substudy_num,                   # block by pair
+    ~ 1 | study_num/substudy_num,                # retain study/substudy structure
+    ~ 1 | g_sp                                   # species (can be phylo-correlated)
+  ),
+  R      = list(g_sp = phylo_vcv[levels(factor(paired_df$g_sp)), 
+                                 levels(factor(paired_df$g_sp))]),
+  data   = paired_df,
+  method = "REML",
+  test   = "t"
+)
+
+sm <- coef(summary(m_paired_only))
+est_log <- sm["predatorspresent","estimate"]
+se_log  <- sm["predatorspresent","se"]
+t_val   <- sm["predatorspresent","tval"]
+df_val  <- sm["predatorspresent","df"]
+p_val   <- sm["predatorspresent","pval"]
+
+# Back-transform predicted means for absent/present (as in Sec. 4)
+new_pred_6b <- tibble::tibble(
+  predators = factor(c("absent","present"), levels = c("absent","present"))
+)
+X_new_6b <- model.matrix(~ predators, data = new_pred_6b)
+preds_6b <- predict(m_paired_only, newmods = X_new_6b[, "predatorspresent", drop = FALSE])
+
+bt <- function(x) sinh(x)
+paired_abs_hat  <- bt(preds_6b$pred[1])
+paired_abs_lo   <- bt(preds_6b$ci.lb[1])
+paired_abs_hi   <- bt(preds_6b$ci.ub[1])
+paired_pres_hat <- bt(preds_6b$pred[2])
+paired_pres_lo  <- bt(preds_6b$ci.lb[2])
+paired_pres_hi  <- bt(preds_6b$ci.ub[2])
+pct_change_6b   <- 100 * (paired_pres_hat - paired_abs_hat) / abs(paired_abs_hat)
+
+cat(sprintf(
+  "Paired meta-analytic test (present vs absent): estimate=%.3f (asinh), SE=%.3f, t=%.2f, df=%.1f, p=%.4g\n",
+  est_log, se_log, t_val, df_val, p_val
+))
+cat(sprintf(
+  "Paired β (absent):  %.3f [%.3f, %.3f]\n", paired_abs_hat,  paired_abs_lo,  paired_abs_hi
+))
+cat(sprintf(
+  "Paired β (present): %.3f [%.3f, %.3f]\n", paired_pres_hat, paired_pres_lo, paired_pres_hi
+))
+cat(sprintf("Percent change (present vs absent): %.1f%%\n", pct_change_6b))
+
+# --- Optional: ML LRT within pairs (model comparison)
+m0_pair_ML <- update(m_paired_only, mods = ~ 1, method = "ML")
+m1_pair_ML <- update(m_paired_only,              method = "ML")
+LRT_6b  <- 2 * (as.numeric(logLik(m1_pair_ML)) - as.numeric(logLik(m0_pair_ML)))
+p_LR_6b <- pchisq(LRT_6b, df = 1, lower.tail = FALSE)
+cat(sprintf("Paired ML LRT: LRT = %.3f, p = %.4g\n", LRT_6b, p_LR_6b))
+
+# --- Save a tidy results row
+res_6b <- tibble::tibble(
+  n_pairs                 = dplyr::n_distinct(paired_df$paired_substudy_num),
+  predators_coef_asinh    = est_log,
+  predators_se_asinh      = se_log,
+  predators_t             = t_val,
+  predators_df            = df_val,
+  predators_p             = p_val,
+  beta_absent_hat         = paired_abs_hat,
+  beta_absent_ci_lo       = paired_abs_lo,
+  beta_absent_ci_hi       = paired_abs_hi,
+  beta_present_hat        = paired_pres_hat,
+  beta_present_ci_lo      = paired_pres_lo,
+  beta_present_ci_hi      = paired_pres_hi,
+  percent_change_present  = pct_change_6b,
+  LRT_within_pairs        = LRT_6b,
+  LRT_p                   = p_LR_6b
+)
+
+readr::write_csv(res_6b, here::here("results", "predator_paired_withinpair_test.csv"))
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 7. Boxplot + meta‐predictions
 # ──────────────────────────────────────────────────────────────────────────────
@@ -237,94 +353,117 @@ ggsave(
 # ──────────────────────────────────────────────────────────────────────
 # 8. Paired‐vs‐unpaired study plot (revised styling)
 # ──────────────────────────────────────────────────────────────────────
+# ---- Fix paired vs unpaired data (do NOT use distinct() here) ----
+library(dplyr); library(tidyr); library(ggplot2)
+library(RColorBrewer); library(scales)
 
-library(ggplot2)
-library(scales)   # for alpha()
+# 1) Standardize predator labels on the modeled data
+md_pred <- model_data %>%
+  mutate(
+    predators = tolower(trimws(predators)),
+    predators = case_when(
+      predators %in% c("present","predator_present","with","yes") ~ "present",
+      predators %in% c("absent","control","without","no")         ~ "absent",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(predators)) %>%
+  mutate(predators = factor(predators, levels = c("absent","present"))) %>%
+  droplevels()
 
-# unpaired_studies and paired_studies already exist from above
-# paired_cols is your named vector of colors by paired_substudy_num
+# 2) Keep only paired_substudy_num that truly have BOTH levels
+paired_ids <- md_pred %>%
+  filter(!is.na(paired_substudy_num)) %>%
+  distinct(paired_substudy_num, predators) %>%
+  count(paired_substudy_num, name = "n_levels") %>%
+  filter(n_levels == 2) %>%
+  pull(paired_substudy_num)
 
-# create a semi‐transparent fill vector for paired points
+# 3) Build full data frames for paired and unpaired
+paired_full <- md_pred %>%
+  filter(!is.na(paired_substudy_num), paired_substudy_num %in% paired_ids)
+
+unpaired_studies <- md_pred %>%
+  filter(is.na(paired_substudy_num) | !(paired_substudy_num %in% paired_ids))
+
+cat("Paired IDs with both levels: ", length(paired_ids), "\n")
+cat("Unpaired rows: ", nrow(unpaired_studies), "\n")
+
+# 4) Collapse each pair to ONE value per condition (median on raw scale)
+paired_pts <- paired_full %>%
+  mutate(y_raw = sinh(betanls2_asinh)) %>%
+  group_by(paired_substudy_num, predators) %>%
+  summarise(y = median(y_raw, na.rm = TRUE), .groups = "drop")
+
+paired_segments <- paired_pts %>%
+  pivot_wider(names_from = predators, values_from = y) %>%
+  filter(is.finite(absent), is.finite(present))
+
+cat("Complete Absent–Present pairs for plotting: ", nrow(paired_segments), "\n")
+
+# 5) Colors for paired groups: Brewer "Paired" without yellow
+raw_paired_pal <- brewer.pal(12, "Paired")
+base_qual      <- raw_paired_pal[ raw_paired_pal != "#FFFF99" ]
+
+pair_ids <- sort(unique(paired_pts$paired_substudy_num))
+if (length(pair_ids) > length(base_qual)) {
+  base_qual <- rep(base_qual, length.out = length(pair_ids))
+}
+paired_cols <- setNames(base_qual[seq_along(pair_ids)], pair_ids)
 paired_fill <- setNames(alpha(paired_cols, 0.7), names(paired_cols))
 
+# 6) Plot: unpaired gray points; paired colored segments + endpoints; meta preds
 p2 <- ggplot() +
-  # 0) Zero reference line
-  geom_hline(
-    yintercept = 0,
-    linetype   = "dashed",
-    color      = "darkgray",
-    size       = 0.8
-  ) +
-  # 1) Unpaired studies: light gray bubbles
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkgray", linewidth = 0.8) +
+  
   geom_jitter(
     data   = unpaired_studies,
     aes(x = predators, y = sinh(betanls2_asinh)),
     shape  = 21, width = 0.1, size = 2.5,
-    fill   = "gray85", color = "gray50",
-    stroke = 0.6, alpha = 0.8
+    fill   = "gray85", color = "gray50", stroke = 0.6, alpha = 0.8
   ) +
-  # 2) Paired studies: colored connecting lines
-  geom_path(
-    data   = paired_studies,
-    aes(
-      x     = predators,
-      y     = sinh(betanls2_asinh),
-      group = paired_substudy_num,
-      color = paired_substudy_num
-    ),
-    size = 1
+  
+  geom_segment(
+    data = paired_segments,
+    aes(x = "absent", xend = "present",
+        y = absent,   yend = present,
+        color = factor(paired_substudy_num)),
+    linewidth = 1
   ) +
-  # 3) Paired study points: semi‐opaque fill + black outline
   geom_point(
-    data   = paired_studies,
-    aes(
-      x    = predators,
-      y    = sinh(betanls2_asinh),
-      fill = paired_substudy_num
-    ),
-    shape  = 21, size = 2,
-    color  = "black", stroke = 0.8
+    data  = paired_pts %>% filter(predators == "absent"),
+    aes(x = predators, y = y, fill = factor(paired_substudy_num)),
+    shape = 21, size = 2, color = "black", stroke = 0.8
   ) +
-  # 4) Meta‐prediction CIs: thick black bars with caps
+  geom_point(
+    data  = paired_pts %>% filter(predators == "present"),
+    aes(x = predators, y = y, fill = factor(paired_substudy_num)),
+    shape = 21, size = 2, color = "black", stroke = 0.8
+  ) +
+  
   geom_errorbar(
-    data    = new_pred,
-    aes(
-      x    = predators,
-      y    = beta_hat,
-      ymin = ci_lo,
-      ymax = ci_hi
-    ),
-    width   = 0.15,
-    size    = 1,
-    color   = "black",
-    lineend = "round"
+    data = new_pred,
+    aes(x = predators, y = beta_hat, ymin = ci_lo, ymax = ci_hi),
+    width = 0.15, linewidth = 1, color = "black", lineend = "round"
   ) +
-  # 5) Meta‐prediction points: large diamond, bold outline
   geom_point(
-    data   = new_pred,
+    data = new_pred,
     aes(x = predators, y = beta_hat),
-    shape  = 23, size = 4,
-    fill   = "#1E3A5F",  # or your chosen color
-    color  = "black", stroke = 1.2
+    shape = 23, size = 4, fill = "#1E3A5F", color = "black", stroke = 1.2
   ) +
-  # scales for paired studies
+  
   scale_color_manual(values = paired_cols, guide = "none") +
-  scale_fill_manual(values = paired_fill, guide = "none") +
-  # axes
-  scale_x_discrete(labels = c("Absent", "Present")) +
+  scale_fill_manual(values  = paired_fill,  guide = "none") +
+  scale_x_discrete(labels = c(absent = "Absent", present = "Present")) +
   scale_y_continuous(
     trans  = "asinh",
     breaks = c(-1000, -100, -10, -1, 0, 1, 10, 100, 1000)
   ) +
-  # proper axis labels
   labs(
     x = "Predator Presence",
     y = expression(
-      paste(
-        "Strength of density-dependent mortality, ",
-        beta,
-        " (", cm^2, ~ fish^-1, ~ day^-1, ")"
-      )
+      paste("Strength of density-dependent mortality, ",
+            beta, " (", cm^2, ~ fish^-1, ~ day^-1, ")")
     )
   ) +
   theme_classic(base_size = 12) +
@@ -334,8 +473,5 @@ print(p2)
 
 ggsave(
   here::here("figures", "Fig4_paired_vs_unpaired.png"),
-  plot   = p2,
-  width  = 6, height = 6,
-  dpi    = 300,
-  bg     = "white"
+  plot = p2, width = 6, height = 6, dpi = 300, bg = "white"
 )

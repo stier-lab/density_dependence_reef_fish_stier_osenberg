@@ -1,245 +1,443 @@
-# ==============================================================================
-# File: 8_sensitivity_core_beta.R
-# Title: Core β Diagnostics — matches 2_estimate_beta_effect.R variance usage
-# Author: Stier Lab (Adrian C. Stier)
-# Date: 2025-09-15
-#
-# PURPOSE
-#   Run reviewer-focused diagnostics for the core mixed-effects meta-analysis:
-#     • Heterogeneity (tau^2, sigma^2, QE/QEp, pseudo-I^2)
-#     • Leave-one-out (CSV + plot)
-#     • Influence diagnostics (Cook’s D, hat, max|DFBETAS| + plot)
-#     • Small-study effects: funnel plot + Egger test (trim-and-fill to SI)
-#
-# MODEL (identical inputs to 2_estimate_beta_effect.R)
-#   yi = betanls2_asinh
-#   V  = betanlsvar_asinh          # (sampling variance in the asinh space)
-#   random = ~ 1 | study_num/substudy_num
-#
-# OUTPUTS
-#   figs/sensitivity_core_beta/baseline_beta/
-#       funnel.(png|pdf), influence.(png|pdf), leave_one_out.(png|pdf)
-#   tables/sensitivity_core_beta/baseline_beta/
-#       heterogeneity.csv, egger_test.csv, trimfill_SI.csv,
-#       influence_metrics.csv, leave_one_out.csv, variance_diagnostics.csv,
-#       intercept_backtransform.csv, sessionInfo_baseline_beta.txt
-# ==============================================================================
+###############################################################################
+# File: 2_estimate_beta_effect.R
+# Purpose:
+#   1) Fit mixed-effects meta-analysis on effect sizes (asinh-transformed β)
+#   2) Back-transform fixed effects & variance components correctly (delta method)
+#   3) Produce an Orchard + Beverton–Holt combined figure
+# Author: Adrian Stier
+# Date:   2025-07-09 (rev. 2025-09-25)
+###############################################################################
 
-suppressPackageStartupMessages({
-  library(dplyr); library(tidyr); library(readr); library(tibble)
-  library(ggplot2); library(forcats); library(broom); library(janitor)
-  library(metafor); library(clubSandwich)
-  library(here)
-})
+# ----------------------------------------------------------------------------
+# 1. Setup & Preprocessing
+# ----------------------------------------------------------------------------
+library(dplyr)
+library(tibble)
+library(metafor)
+library(here)
 
-# ---------------------------- Paths & Helpers ---------------------------------
-ROOT_FIG <- "figs/sensitivity_core_beta"
-ROOT_TAB <- "tables/sensitivity_core_beta"
-dir.create(ROOT_FIG, recursive = TRUE, showWarnings = FALSE)
-dir.create(ROOT_TAB, recursive = TRUE, showWarnings = FALSE)
+# viz pkgs used later (kept for consistency with your figure styling)
+library(ggplot2)
+library(tidyr)
+library(ggtext)
+library(ggbeeswarm)
+library(cowplot)
 
-mk_dirs <- function(label) {
-  fig_dir <- file.path(ROOT_FIG, label); dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
-  tab_dir <- file.path(ROOT_TAB, label); dir.create(tab_dir, recursive = TRUE, showWarnings = FALSE)
-  list(fig = fig_dir, tab = tab_dir)
-}
-
-# Publication-quality saving: PNG + vector PDF
-save_plot_dual <- function(plot, outfile_base, width=7, height=5, dpi=400, bg="white") {
-  ggplot2::ggsave(paste0(outfile_base, ".png"), plot, width=width, height=height, dpi=dpi, bg=bg)
-  ggplot2::ggsave(paste0(outfile_base, ".pdf"), plot, width=width, height=height,
-                  dpi=600, bg=bg, device = cairo_pdf)
-}
-
-theme_pub <- function(base_size = 12) {
-  theme_bw(base_size = base_size) +
-    theme(
-      panel.grid.major = element_line(color = "grey90", linewidth = 0.3),
-      panel.grid.minor = element_blank(),
-      axis.title = element_text(face = "bold"),
-      plot.title = element_text(face = "bold", hjust = 0.5),
-      legend.position = "none"
-    )
-}
-
-# Conservative variance floor, used only for fitting/plots (raw V untouched)
-compute_vi_floor <- function(v) {
-  pos <- v[is.finite(v) & v > 0]
-  if (!length(pos)) return(NA_real_)
-  max(1e-12,
-      min(min(pos, na.rm=TRUE) * 1e-3,
-          stats::quantile(pos, probs = 0.005, na.rm = TRUE, names = FALSE)))
-}
-
-with_v_fit <- function(dat, vi_col = "betanlsvar_asinh") {
-  v_raw <- dat[[vi_col]]
-  floor_val <- compute_vi_floor(v_raw)
-  dat %>% mutate(
-    v_fit   = if (!is.na(floor_val)) pmax(.data[[vi_col]], floor_val) else .data[[vi_col]],
-    v_floor = floor_val
-  )
-}
-
-# ---------------------------- Load analysis data ------------------------------
-# Must match 2_estimate_beta_effect.R
 source(here::here("code", "1_data_phylogeny_loading.R"))  # loads all_dat2
 
+# Filter out incomplete cases for model fitting
 model_data <- all_dat2 %>%
-  filter(
+  dplyr::filter(
     !is.na(study_num),
     !is.na(substudy_num),
     !is.na(betanls2_asinh),
     !is.na(betanlsvar_asinh)
-  ) %>%
-  # add v_fit used for *fitting and bias plots only*
-  with_v_fit("betanlsvar_asinh")
-
-# ----------------------------- Fit core model ---------------------------------
-fit_core <- tryCatch(
-  metafor::rma.mv(
-    yi     = betanls2_asinh,
-    V      = v_fit,                       # stays in asinh space (variance)
-    random = list(~ 1 | study_num/substudy_num),
-    data   = model_data,
-    method = "REML",
-    test   = "t"
-  ),
-  error = function(e) { message("Core fit failed: ", e$message); NULL }
-)
-
-# Back-transform fixed intercept (context only, not used in diagnostics)
-inv_asinh <- function(x) sinh(x)
-if (!is.null(fit_core)) {
-  cf <- coef(summary(fit_core))
-  intr <- as_tibble(cf, rownames = "term") %>%
-    filter(term == "intrcpt") %>%
-    transmute(
-      component        = "fixed_effect",
-      estimate_asinh   = estimate,
-      ci_lb_asinh      = ci.lb,
-      ci_ub_asinh      = ci.ub,
-      estimate         = inv_asinh(estimate),
-      ci_lower         = inv_asinh(ci.lb),
-      ci_upper         = inv_asinh(ci.ub)
-    )
-  # Save for SI / narrative
-  dirs <- mk_dirs("baseline_beta")
-  readr::write_csv(intr, file.path(dirs$tab, "intercept_backtransform.csv"))
-}
-
-# --------------------------- Heterogeneity table ------------------------------
-dirs <- mk_dirs("baseline_beta")
-fig_dir <- dirs$fig; tab_dir <- dirs$tab
-
-if (!is.null(fit_core)) {
-  het <- tibble(
-    k            = nrow(model_data),
-    tau2_resid   = unname(fit_core$tau2),
-    QE           = unname(fit_core$QE),
-    QEp          = unname(fit_core$QEp),
-    sigma2       = paste(round(fit_core$sigma2, 6), collapse = ";"),
-    sigma2_names = paste(fit_core$s.names, collapse = ";"),
-    I2_overall   = suppressWarnings(tryCatch(metafor::i2(fit_core)$I2, error = function(e) NA_real_))
   )
-  readr::write_csv(het, file.path(tab_dir, "heterogeneity.csv"))
-} else {
-  readr::write_csv(tibble(note="Intercept fit failed; heterogeneity unavailable."),
-                   file.path(tab_dir, "heterogeneity.csv"))
+
+# ----------------------------------------------------------------------------
+# 2. Fit mixed-effects model
+# ----------------------------------------------------------------------------
+meta_model <- metafor::rma.mv(
+  yi     = betanls2_asinh,
+  V      = betanlsvar_asinh,
+  random = list(~1 | study_num/substudy_num),
+  data   = model_data,
+  method = "REML",
+  test   = "t"
+)
+
+# ----------------------------------------------------------------------------
+# 3. Fixed-effect (intercept) results & back-transform
+# ----------------------------------------------------------------------------
+coef_df <- coef(summary(meta_model)) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column(var = "term") %>%
+  dplyr::select(term, estimate, ci.lb, ci.ub)
+
+inv_asinh <- function(x) sinh(x)
+
+fixed_effect_results <- coef_df %>%
+  dplyr::filter(term == "intrcpt") %>%
+  dplyr::transmute(
+    component       = "fixed_effect",
+    estimate_asinh  = estimate,
+    ci_lb_asinh     = ci.lb,
+    ci_ub_asinh     = ci.ub,
+    estimate        = inv_asinh(estimate),
+    ci_lower        = inv_asinh(ci.lb),
+    ci_upper        = inv_asinh(ci.ub)
+  )
+
+# convenience values for plotting later
+back_transformed_coef       <- fixed_effect_results$estimate
+back_transformed_conf_lower <- fixed_effect_results$ci_lower
+back_transformed_conf_upper <- fixed_effect_results$ci_upper
+
+# ----------------------------------------------------------------------------
+# 4. Variance components (delta-method back-transform)
+# ----------------------------------------------------------------------------
+# Var(X) ≈ [cosh(mu_Y)]^2 * Var(Y), where X = sinh(Y) and mu_Y is the intercept on asinh scale
+var_comps <- as.numeric(summary(meta_model)$sigma2)
+names(var_comps) <- c("study", "substudy")
+
+# Intercept (grand mean) on the asinh scale
+mu_asinh  <- as.numeric(summary(meta_model)$b[1, 1])
+scale_dm  <- cosh(mu_asinh)^2
+
+variance_results <- tibble::enframe(var_comps, name = "component", value = "var_asinh") %>%
+  dplyr::mutate(
+    estimate = var_asinh * scale_dm,   # back-transformed variance on original scale
+    ci_lower = NA_real_,               # non-trivial; left NA unless computed explicitly
+    ci_upper = NA_real_
+  ) %>%
+  dplyr::select(component, estimate, ci_lower, ci_upper)
+
+# ----------------------------------------------------------------------------
+# 5. Compile & (optionally) Save Results
+# ----------------------------------------------------------------------------
+results_summary <- dplyr::bind_rows(fixed_effect_results, variance_results)
+print(results_summary)
+# readr::write_csv(results_summary, here::here("results", "beta_meta_summary.csv"))
+
+# ----------------------------------------------------------------------------
+# 6. Combined Orchard & Beverton–Holt Figure
+# ----------------------------------------------------------------------------
+
+# 6.1 Beverton–Holt prep (kept your formatting/colors/labels)
+all_data         <- read.csv("data/all_studies_looped-2024-09-11.csv")
+combined_results <- read.csv("output/combined_results_2024-09-17.csv")
+covariates       <- read.csv("output/merged-covariates-10-21-24.csv")
+
+bh_f <- function(alpha, beta, t_days, x) {
+  (x * exp(-alpha * t_days)) / (1 + (beta * x * (1 - exp(-alpha * t_days)) / alpha))
 }
 
-# ----------------------- Variance diagnostics (SI transparency) ----------------
-vard <- tibble(
-  k        = nrow(model_data),
-  v_floor  = unique(model_data$v_floor),
-  V_min    = min(model_data$betanlsvar_asinh, na.rm=TRUE),
-  V_q05    = quantile(model_data$betanlsvar_asinh, 0.05, na.rm=TRUE),
-  V_med    = median(model_data$betanlsvar_asinh, na.rm=TRUE),
-  V_q95    = quantile(model_data$betanlsvar_asinh, 0.95, na.rm=TRUE),
-  V_max    = max(model_data$betanlsvar_asinh, na.rm=TRUE)
-)
-readr::write_csv(vard, file.path(tab_dir, "variance_diagnostics.csv"))
+usedf <- covariates %>%
+  dplyr::filter(use_2024 == "yes", predators == "present") %>%
+  dplyr::select(substudy_num, family, predators)
 
-# -------------------------- Influence diagnostics -----------------------------
-if (!is.null(fit_core)) {
-  cooks_cutoff <- 4 / max(5, nrow(model_data))
-  
-  infl <- tryCatch(metafor::influence.rma.mv(fit_core), error=function(e) NULL)
-  if (!is.null(infl)) {
-    inf_df <- tibble(
-      idx     = seq_along(infl$cook.d),
-      cooks_d = infl$cook.d,
-      hat     = infl$hat,
-      dfbetas = apply(infl$dfbs, 1, function(x) max(abs(x), na.rm = TRUE))
+all_data    <- dplyr::inner_join(all_data, usedf, by = "substudy_num")
+merged_data <- dplyr::inner_join(all_data, combined_results, by = "substudy_num")
+
+filtered_data <- merged_data %>%
+  dplyr::group_by(substudy_num) %>%
+  dplyr::filter(n() >= 10) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(beta_strength = beta)
+
+beta_quantiles <- stats::quantile(combined_results$beta,
+                                  probs = c(0.10, 0.5, 0.75, 0.95),
+                                  na.rm = TRUE)
+
+closest_values <- sapply(beta_quantiles, function(x) {
+  filtered_data$beta[which.min(abs(filtered_data$beta - x))]
+})
+
+matching_substudies <- filtered_data %>%
+  dplyr::filter(beta %in% closest_values) %>%
+  dplyr::distinct(substudy_num)
+
+final_data <- filtered_data %>%
+  dplyr::filter(substudy_num %in% matching_substudies$substudy_num) %>%
+  dplyr::arrange(beta)
+
+desired_order <- c(212, 249, 76, 256)
+final_data <- final_data %>%
+  dplyr::filter(substudy_num %in% desired_order) %>%
+  dplyr::mutate(substudy_num = factor(substudy_num, levels = desired_order))
+
+predicted_data <- final_data %>%
+  dplyr::group_by(substudy_num) %>%
+  dplyr::mutate(settler_range = list(seq(0, max(n0_m2, na.rm = TRUE), length.out = 100))) %>%
+  tidyr::unnest(cols = c(settler_range)) %>%
+  dplyr::mutate(predicted_recruits = bh_f(alpha, beta, t, settler_range))
+
+facet_labels <- final_data %>%
+  dplyr::mutate(genus_species = gsub("_", " ", genus_species)) %>%
+  dplyr::mutate(
+    facet_label = paste0(
+      "*", genus_species, "*\n",
+      " *β* = ", round(beta * 1e4, 0), " "
     )
-    readr::write_csv(inf_df, file.path(tab_dir, "influence_metrics.csv"))
-    
-    p_inf <- inf_df %>%
-      ggplot(aes(cooks_d, dfbetas)) +
-      geom_point(size = 1.8, alpha = .9) +
-      geom_vline(xintercept = cooks_cutoff, linetype = "dashed") +
-      labs(x = "Cook's distance", y = "max|DFBETAS|", title = "Influence diagnostics") +
-      theme_pub()
-    save_plot_dual(p_inf, file.path(fig_dir, "influence"))
-  }
-  
-  # ------------------------------ Leave-one-out -------------------------------
-  loo <- tryCatch(metafor::leave1out.rma.mv(fit_core), error=function(e) NULL)
-  if (!is.null(loo) && length(loo$estimate) == nrow(model_data)) {
-    loo_df <- tibble(idx = seq_along(loo$estimate),
-                     loo_est = as.numeric(loo$estimate))
-    readr::write_csv(loo_df, file.path(tab_dir, "leave_one_out.csv"))
-    
-    p_loo <- loo_df %>%
-      ggplot(aes(idx, loo_est)) +
-      geom_point(size = 1.6, alpha = .9) +
-      geom_hline(yintercept = as.numeric(fit_core$b), linetype = "dashed") +
-      labs(x = "Left-out index", y = expression(beta[asinh]),
-           title = "Leave-one-out β (asinh space)") +
-      theme_pub()
-    save_plot_dual(p_loo, file.path(fig_dir, "leave_one_out"))
-  }
-}
+  ) %>%
+  dplyr::distinct(substudy_num, facet_label)
 
-# ------------------------ Small-study effects (bias) --------------------------
-# NB: use rma.uni on the SAME effect/variance used above (asinh space with v_fit)
-uni <- tryCatch(
-  metafor::rma.uni(yi = betanls2_asinh, vi = v_fit, method = "REML", data = model_data),
-  error = function(e) NULL
+beverton_holt_plot <- ggplot() +
+  geom_point(
+    data = final_data, aes(x = n0_m2, y = nt_m2),
+    size = 3, alpha = 0.8, color = "#2C3E50",
+    position = position_jitter(width = 0.05, height = 0)
+  ) +
+  geom_line(
+    data = predicted_data, aes(x = settler_range, y = predicted_recruits),
+    size = 1.5, color = "#E74C3C"
+  ) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "#95A5A6", linewidth = 1) +
+  facet_wrap(
+    ~substudy_num, ncol = 1, scales = "free",
+    labeller = labeller(substudy_num = setNames(facet_labels$facet_label,
+                                                facet_labels$substudy_num))
+  ) +
+  labs(
+    x = expression(paste("Initial Density (Settlers per ", m^{-2}, ")")),
+    y = expression(paste("Final Density (Recruits per ", m^{-2}, ")"))
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text = ggtext::element_markdown(size = 14, face = "bold"),
+    axis.text  = element_text(size = 12, color = "#34495E"),
+    axis.title = element_text(size = 14, face = "bold"),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_line(color = "gray95"),
+    panel.background = element_rect(fill = "white")
+  )
+
+# 6.2 Orchard plot (manual) — formatting retained
+precision_breaks <- c(1e-12, 1e4, 1e6, 1e8, 1e12)
+precision_labels <- c(expression(10^-12), expression(10^4), expression(10^6),
+                      expression(10^8), expression(10^12))
+
+global_estimate <- data.frame(
+  back_transformed_coef = back_transformed_coef,
+  back_transformed_conf_lower = back_transformed_conf_lower,
+  back_transformed_conf_upper = back_transformed_conf_upper,
+  y_position = "Beta"
 )
 
-if (!is.null(uni)) {
-  # symmetric x-limits around 0 using 99th percentile of |yi|
-  xlim_max <- stats::quantile(abs(model_data$betanls2_asinh), probs = 0.99, na.rm = TRUE)
-  xlim_max <- max(1e-6, as.numeric(xlim_max))
-  xlim_use <- c(-xlim_max, xlim_max)
+shape_mapping <- c("212", "249", "76", "256")
+
+beta_all_all <- all_dat2 %>%
+  dplyr::select(
+    beta_hat,
+    beta_variance_nls2,
+    study_num,
+    substudy_num,
+    betanlsvar_raw_cm,
+    betanls2_raw_cm,
+    betanls2_asinh,
+    betanlsvar_asinh
+  ) %>%
+  dplyr::mutate(
+    precision   = 1 / beta_variance_nls2,
+    point_shape = ifelse(as.character(substudy_num) %in% shape_mapping, 22, 16)
+  )
+
+orchard_manual <- ggplot(beta_all_all, aes(
+  x    = betanls2_raw_cm,
+  y    = "Beta",
+  size = sqrt(precision)
+)) +
+  ggbeeswarm::geom_quasirandom(
+    aes(alpha = precision),
+    shape = 21, fill = "#377EB8", color = "#377EB8",
+    width = 0.15, alpha = 0.7
+  ) +
+  geom_segment(
+    data = global_estimate,
+    aes(x = back_transformed_conf_lower,
+        xend = back_transformed_conf_upper,
+        y = y_position, yend = y_position),
+    color = "black", linewidth = 1.2, inherit.aes = FALSE
+  ) +
+  geom_point(
+    data  = global_estimate,
+    aes(x = back_transformed_coef, y = y_position),
+    color = "black", size = 5, shape = 21,
+    fill = "#377EB8", stroke = 1.5,
+    inherit.aes = FALSE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed",
+             color = "black", linewidth = 1) +
+  geom_vline(xintercept = c(-100, -10, 0, 10, 100, 1000),
+             linetype = "dashed", color = "gray70", linewidth = 0.8) +
+  geom_vline(xintercept = 0, linetype = "solid",
+             color = "black", linewidth = 1) +
+  labs(
+    x    = expression(paste("Strength of density-dependent mortality, ",
+                            beta, " (", cm^2, " ", fish^{-1}, " ", day^{-1}, ")")),
+    y    = NULL,
+    size = "Precision (1/SE)"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.title.y      = element_blank(),
+    legend.position   = c(0.85, 0.85),
+    legend.background = element_rect(fill = "white", color = "black"),
+    legend.key        = element_blank(),
+    axis.text         = element_text(size = 14),
+    axis.title.x      = element_text(size = 16, face = "bold"),
+    panel.grid.major  = element_line(color = "gray90"),
+    panel.grid.minor  = element_blank(),
+    panel.background  = element_rect(fill = "white")
+  ) +
+  scale_x_continuous(
+    trans  = "asinh",
+    limits = c(-500, 10000),
+    breaks = c(-500, -100, -10, -1, 0, 1, 10, 100, 1000, 2000, 10000)
+  ) +
+  scale_size_continuous(
+    name   = "Precision",
+    range  = c(3, 10),
+    breaks = sqrt(precision_breaks),
+    labels = precision_labels
+  ) +
+  guides(
+    size = guide_legend(
+      override.aes = list(
+        shape  = 16,
+        fill   = "#377EB8",
+        color  = "#377EB8",
+        stroke = 0
+      )
+    ),
+    alpha = "none"
+  ) +
+  coord_flip()
+
+# 6.3 Combine and save figure (unchanged settings)
+bplot2 <- cowplot::plot_grid(
+  orchard_manual, beverton_holt_plot,
+  labels = c('A', 'B'), label_size = 12, ncol = 2,
+  rel_heights = c(1, 2)
+)
+print(bplot2)
+
+ggplot2::ggsave(
+  filename = here::here("figures", "figure1_orchard_bh_plot.pdf"),
+  plot     = bplot2,
+  width    = 10,
+  height   = 11,
+  units    = "in",
+  dpi      = 300,
+  device   = cairo_pdf,   # keep if Cairo is available
+  bg       = "white"
+)
+
+
+
+
+# ----------------------------------------------------------------------------
+# 7. Funnel plots: raw vs. asinh; with and without high-variance studies
+# ----------------------------------------------------------------------------
+
+# Helper: generic funnel plot on the supplied scale
+make_funnel <- function(df, eff_col, var_col, mu, title, xlab,
+                        point_col = "#377EB8",
+                        jitter_w = 0.08, jitter_h = 0.0) {
   
-  # base metafor funnel (it draws CI wedges correctly), save PNG + PDF
-  png(file.path(fig_dir, "funnel.png"), width = 1800, height = 1400, res = 400, bg = "white")
-  par(mar = c(4.2, 4.2, 3.0, 1.0))
-  metafor::funnel(uni, main = "Funnel plot (asinh space)",
-                  xlim = xlim_use, refline = 0, shade = c("gray95", "gray90"))
-  dev.off()
+  df <- df %>%
+    dplyr::mutate(
+      effect = .data[[eff_col]],
+      se     = sqrt(.data[[var_col]])
+    ) %>%
+    dplyr::filter(is.finite(effect), is.finite(se), se >= 0)
   
-  grDevices::cairo_pdf(file.path(fig_dir, "funnel.pdf"), width = 7, height = 5, family = "Helvetica")
-  par(mar = c(4.2, 4.2, 3.0, 1.0))
-  metafor::funnel(uni, main = "Funnel plot (asinh space)",
-                  xlim = xlim_use, refline = 0, shade = c("gray95", "gray90"))
-  dev.off()
+  # y-sequence for funnel boundaries
+  yseq <- seq(0, max(df$se, na.rm = TRUE), length.out = 200)
+  bounds <- tibble::tibble(
+    se    = yseq,
+    low   = mu - 1.96 * se,
+    high  = mu + 1.96 * se
+  )
   
-  # Egger regression (small-study effects)
-  egger <- tryCatch(metafor::regtest(uni, model = "lm"), error=function(e) NULL)
-  if (!is.null(egger)) {
-    readr::write_csv(tibble(z = unname(egger$zval), p = unname(egger$pval)),
-                     file.path(tab_dir, "egger_test.csv"))
-  }
-  
-  # Trim-and-fill (to SI)
-  tf <- tryCatch(metafor::trimfill(uni), error = function(e) NULL)
-  if (!is.null(tf)) readr::write_csv(broom::tidy(tf), file.path(tab_dir, "trimfill_SI.csv"))
+  ggplot(df, aes(x = effect, y = se)) +
+    # funnel boundaries
+    geom_line(data = bounds, aes(x = low,  y = se),  color = "gray40", linewidth = 0.7) +
+    geom_line(data = bounds, aes(x = high, y = se),  color = "gray40", linewidth = 0.7) +
+    # vertical mean line
+    geom_vline(xintercept = mu, linetype = "dashed", color = "black", linewidth = 0.7) +
+    # points (jittered horizontally)
+    geom_point(position = position_jitter(width = jitter_w, height = jitter_h),
+               shape = 21, fill = point_col, color = point_col, alpha = 0.75, size = 2.8, stroke = 0.2) +
+    scale_y_reverse(expand = expansion(mult = c(0.02, 0.06))) +  # standard funnel: small SE at top
+    labs(x = xlab, y = "Standard error", title = title) +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title        = element_text(face = "bold", size = 14),
+      axis.title        = element_text(face = "bold", size = 14),
+      axis.text         = element_text(size = 12, color = "#34495E"),
+      panel.grid.major  = element_line(color = "gray90"),
+      panel.grid.minor  = element_line(color = "gray95"),
+      panel.background  = element_rect(fill = "white", color = NA)
+    )
 }
 
-# ------------------------------- Session info ---------------------------------
-writeLines(capture.output(sessionInfo()),
-           con = file.path(tab_dir, "sessionInfo_baseline_beta.txt"))
+# 7.1 Set up data, means, and high-variance filters
+mu_asinh <- as.numeric(summary(meta_model)$b[1, 1])
+mu_raw   <- back_transformed_coef[1]  # from Section 3 (sinh of intercept CI mid)
 
-message("Core β diagnostics complete. See: ", ROOT_FIG, " / ", ROOT_TAB)
+# Define "high variance" as the top 5% of sampling variances on each scale
+q_raw   <- stats::quantile(all_dat2$betanlsvar_raw_cm,   probs = 0.95, na.rm = TRUE)
+q_asinh <- stats::quantile(all_dat2$betanlsvar_asinh,    probs = 0.95, na.rm = TRUE)
+
+df_raw_all   <- all_dat2 %>% dplyr::filter(is.finite(betanls2_raw_cm),  is.finite(betanlsvar_raw_cm))
+df_raw_trim  <- df_raw_all  %>% dplyr::filter(betanlsvar_raw_cm   <= q_raw)
+
+df_tr_all    <- all_dat2 %>% dplyr::filter(is.finite(betanls2_asinh), is.finite(betanlsvar_asinh))
+df_tr_trim   <- df_tr_all   %>% dplyr::filter(betanlsvar_asinh    <= q_asinh)
+
+# 7.2 Build the four funnel plots
+p_raw_all <- make_funnel(
+  df      = df_raw_all,
+  eff_col = "betanls2_raw_cm",
+  var_col = "betanlsvar_raw_cm",
+  mu      = mu_raw,
+  title   = "Funnel (raw scale): all studies",
+  xlab    = expression(paste(beta, " (", cm^2, " ", fish^{-1}, " ", day^{-1}, ")"))
+)
+
+p_raw_trim <- make_funnel(
+  df      = df_raw_trim,
+  eff_col = "betanls2_raw_cm",
+  var_col = "betanlsvar_raw_cm",
+  mu      = mu_raw,
+  title   = "Funnel (raw scale): excluding top 5% variances",
+  xlab    = expression(paste(beta, " (", cm^2, " ", fish^{-1}, " ", day^{-1}, ")"))
+)
+
+p_tr_all <- make_funnel(
+  df      = df_tr_all,
+  eff_col = "betanls2_asinh",
+  var_col = "betanlsvar_asinh",
+  mu      = mu_asinh,
+  title   = "Funnel (asinh scale): all studies",
+  xlab    = expression(paste("asinh(", beta, ")"))
+)
+
+p_tr_trim <- make_funnel(
+  df      = df_tr_trim,
+  eff_col = "betanls2_asinh",
+  var_col = "betanlsvar_asinh",
+  mu      = mu_asinh,
+  title   = "Funnel (asinh scale): excluding top 5% variances",
+  xlab    = expression(paste("asinh(", beta, ")"))
+)
+
+# 7.3 Arrange and save
+funnel_grid <- cowplot::plot_grid(
+  p_raw_all, p_raw_trim, p_tr_all, p_tr_trim,
+  labels = c("A", "B", "C", "D"),
+  label_size = 12, ncol = 2
+)
+print(funnel_grid)
+
+ggplot2::ggsave(
+  filename = here::here("figures", "figure2_funnel_plots.pdf"),
+  plot     = funnel_grid,
+  width    = 10,
+  height   = 8,
+  units    = "in",
+  dpi      = 300,
+  device   = cairo_pdf,
+  bg       = "white"
+)
+
+# (Optional PNG for quick looks)
+# ggplot2::ggsave(
+#   filename = here::here("figures", "figure2_funnel_plots.png"),
+#   plot     = funnel_grid,
+#   width    = 10, height = 8, units = "in", dpi = 300, bg = "white"
+# )
+
+

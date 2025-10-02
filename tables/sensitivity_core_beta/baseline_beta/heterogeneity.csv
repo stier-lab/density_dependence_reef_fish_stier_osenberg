@@ -1,2 +1,2 @@
-k,tau2_resid,QE,QEp,sigma2,sigma2_names,I2_overall
-147,0,3712.6841277293315,0,0.533591;11.384192,study_num;study_num/substudy_num,NA
+k,beta_hat,beta_se,QE,QEp,tau2_resid,sigma2,sigma2_names,I2_overall
+1293,0.04093598131787568,0.018462785157770136,114804.60353226024,0,0,0;0.000356;0.012706,study_num;study_num/substudy_num;g_sp,NA

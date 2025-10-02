@@ -204,68 +204,117 @@ print(ci_K_obs)
 
 
 # ----------------------------------------------------------------------------
-# 6. Compare models: no-phylo vs. phylo-random
+# 6. Compare models: no-phylo vs. phylo-random (AIC + LRT)
 # ----------------------------------------------------------------------------
+
 # Build phylogenetic VCV matrix
 phylo_vcv <- ape::vcv(pruned_tree, corr = TRUE)
 
-# Only keep species that are in the VCV matrix
+# Restrict to species present in the VCV matrix
 species_phylo <- species_df %>%
   dplyr::filter(g_sp %in% rownames(phylo_vcv)) %>%
   droplevels()
 
-# (a) no‐phylo model on the same data subset
+# (a) Null model: no species-level term
 m_nosp <- metafor::rma.mv(
   yi     = betanls2_asinh,
   V      = betanlsvar_asinh,
-  mods   = ~1,
-  random = list(~1 | study_num/substudy_num),
+  mods   = ~ 1,
+  random = list(~ 1 | study_num/substudy_num),
   data   = species_phylo,
   method = "REML"
 )
 
-# (b) phylo‐random model
+# (b) Alternative: species-level term with phylogenetic correlation
 m_gsp <- metafor::rma.mv(
   yi     = betanls2_asinh,
   V      = betanlsvar_asinh,
-  mods   = ~1,
-  random = list(~1 | study_num/substudy_num, ~1 | g_sp),
+  mods   = ~ 1,
+  random = list(~ 1 | study_num/substudy_num, ~ 1 | g_sp),
   R      = list(g_sp = phylo_vcv),
   data   = species_phylo,
   method = "REML"
 )
+
+# ---- AIC ----
 comp_aic <- AIC(m_nosp, m_gsp)
-readr::write_csv(as.data.frame(comp_aic), here::here("results", "model_comparison_aic.csv"))
+print(comp_aic)
+readr::write_csv(as.data.frame(comp_aic),
+                 here::here("results", "model_comparison_aic.csv"))
 
-# Z-test for species variance
-species_var <- m_gsp$sigma2[3]
-species_se  <- sqrt(species_var)
-z_species   <- species_var / species_se
-p_species   <- 2 * pnorm(-abs(z_species))
+# ---- REML LRT (boundary-corrected) ----
+ll0 <- as.numeric(logLik(m_nosp))   # store once, reuse if needed later
+ll1 <- as.numeric(logLik(m_gsp))
+LRT <- 2 * (ll1 - ll0)
+p_chi     <- pchisq(LRT, df = 1, lower.tail = FALSE)
+p_mixture <- 0.5 * p_chi   # 0.5*χ²0 + 0.5*χ²1
 
-tibble::tibble(
-  Z_score = z_species,
-  P_value = p_species
-) %>%
-  readr::write_csv(here::here("results", "species_variance_test.csv"))
-
-# ----------------------------------------------------------------------------
-# 7. Variance partitioning
-# ----------------------------------------------------------------------------
-sigma      <- m_gsp$sigma2
-names(sigma) <- c("study", "substudy", "species")
-total_var  <- sigma["substudy"] + sigma["species"]
-
-partition <- tibble::tibble(
-  level      = names(sigma),
-  variance   = sigma,
-  proportion = case_when(
-    level == "substudy" ~ sigma["substudy"] / total_var,
-    level == "species"  ~ sigma["species"]  / total_var,
-    TRUE                ~ NA_real_
-  )
+lrt_tab <- data.frame(
+  logLik_no_phylo    = ll0,
+  logLik_phylo       = ll1,
+  LRT                = LRT,
+  df                 = 1L,
+  p_chisq_df1        = p_chi,
+  p_boundary_mixture = p_mixture
 )
-readr::write_csv(partition, here::here("results", "variance_partitioning.csv"))
+
+print(lrt_tab)
+readr::write_csv(lrt_tab,
+                 here::here("results", "species_variance_LRT.csv"))
+
+# ----------------------------------------------------------------------------
+# 7. Inference on species variance (phylo-random effect): CIs (and optional bootstrap)
+# ----------------------------------------------------------------------------
+
+# Profile-likelihood CI for the species variance component (component #3)
+ci_sigma3_obj <- confint(m_gsp, sigma2 = 3, level = 0.95)
+
+# Robust coercion helper (handles matrix/data.frame or list with $random/$beta)
+to_ci_df <- function(x) {
+  if (is.matrix(x) || is.data.frame(x)) {
+    df <- as.data.frame(x, stringsAsFactors = FALSE)
+    if (!is.null(rownames(df)) && any(nzchar(rownames(df)))) {
+      df <- tibble::rownames_to_column(df, "parameter")
+    } else if (is.null(df$parameter)) {
+      df$parameter <- rownames(x)
+    }
+    rownames(df) <- NULL
+    return(df)
+  }
+  if (!is.null(x$random)) {
+    df <- as.data.frame(x$random, stringsAsFactors = FALSE)
+    df <- tibble::rownames_to_column(df, "parameter")
+    rownames(df) <- NULL
+    return(df)
+  }
+  if (!is.null(x$beta)) {
+    df <- as.data.frame(x$beta, stringsAsFactors = FALSE)
+    df <- tibble::rownames_to_column(df, "parameter")
+    rownames(df) <- NULL
+    return(df)
+  }
+  stop("Unhandled confint() return structure; consider updating 'metafor'.")
+}
+
+ci_sigma3_df <- to_ci_df(ci_sigma3_obj)
+print(ci_sigma3_df)
+readr::write_csv(ci_sigma3_df, here::here("results", "species_variance_CI.csv"))
+
+# (Optional) Parametric bootstrap LRT for extra rigor (run only if needed)
+# set.seed(1)
+# B <- 1000
+# LRT_sim <- numeric(B)
+# for (b in 1:B) {
+#   sim <- metafor::simulate_rma_mv(m_nosp)  # or simulate_rma.mv() on older versions
+#   fit0 <- update(m_nosp, yi = sim$yi, V = sim$V)
+#   fit1 <- update(m_gsp,  yi = sim$yi, V = sim$V)
+#   LRT_sim[b] <- 2 * (as.numeric(logLik(fit1)) - as.numeric(logLik(fit0)))
+# }
+# p_boot <- mean(LRT_sim >= LRT)
+# print(tibble::tibble(LRT = LRT, p_boundary_mixture = p_mixture, p_boot = p_boot))
+# readr::write_csv(tibble::tibble(LRT = LRT, p_boundary_mixture = p_mixture, p_boot = p_boot),
+#                  here::here("results", "species_variance_LRT_boot.csv"))
+
 
 # ----------------------------------------------------------------------------
 # 8. Wrasse example: within vs. among variance

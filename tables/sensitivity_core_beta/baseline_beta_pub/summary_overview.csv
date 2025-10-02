@@ -1,0 +1,2 @@
+label,k,beta_hat,beta_se,QE,QEp,tau2_resid,I2_overall,egger_full_p,egger_zoom95_p
+baseline_beta_asinh,1293,0.04026758592191115,0.017862156250578364,114990.82240000195,0,0,NA,0,0

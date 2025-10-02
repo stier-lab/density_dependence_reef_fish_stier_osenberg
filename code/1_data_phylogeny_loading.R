@@ -96,7 +96,7 @@ duration_df <- read.csv(here::here("data", "all_studies_looped-2024-09-11.csv"))
   dplyr::group_by(substudy_num) %>%
   dplyr::summarize(duration = mean(t, na.rm = TRUE), .groups = "drop")
 
-# **FIXED** here: left_join keeps only all_dat rows (147), adding duration where available
+#here: left_join keeps only all_dat rows (147), adding duration where available
 all_dat2 <- all_dat %>%
   dplyr::left_join(duration_df, by = "substudy_num") %>%
   dplyr::rename(beta_hat = betanls2_raw)
@@ -143,7 +143,8 @@ all_dat2 <- all_dat2 %>%
     betanls2_raw_cm    = beta_hat * 1e4,             # convert per m² → per cm²
     betanlsvar_raw_cm  = beta_variance_nls2 * 1e8,   # variance scales by (1e4)²
     betanls2_asinh     = asinh(betanls2_raw_cm),
-    betanlsvar_asinh   = betanlsvar_raw_cm * (1 / sqrt(1 + betanlsvar_raw_cm^2))
+    betanlsvar_asinh   = betanlsvar_raw_cm * (1 / (1 + betanlsvar_raw_cm^2))
+    
   )
 
 message("Unique studies:   ", dplyr::n_distinct(all_dat2$study_num))
@@ -247,28 +248,68 @@ study_substudy_info_df %>%
   gt::gtsave(filename = here::here("output", "study_substudy_info.html"))
 
 # -----------------------------------------------------------------------------
-# 8. Meta-Analysis Citation Table
+# 8. Meta-Analysis Citation Table (vectorized + robust author parsing)
 # -----------------------------------------------------------------------------
-# Helper: Standardize author names
-fix_author_case <- function(name) {
-  name    <- stringr::str_trim(name)
-  parts   <- stringr::str_split(name, ",\\s*")[[1]]
-  surname <- stringr::str_to_title(parts[1])
-  initials<- if (length(parts) > 1) stringr::str_replace_all(parts[2], "\\b\\w+\\b", toupper) else ""
-  paste0(surname, if (initials != "") paste0(", ", initials))
+
+# Helpers ----------------------------------------------------------------------
+
+# split string by first present delimiter among these
+.split_first <- function(x, delims = c(";", "\\s+&\\s+", "\\s+and\\s+")) {
+  for (d in delims) {
+    if (stringr::str_detect(x, d)) {
+      return(stringr::str_split(x, d, n = 2, simplify = TRUE)[, 1])
+    }
+  }
+  x
 }
+
+# Given a single author token, return "Surname, INITIALS"
+.norm_one_author <- function(tok) {
+  tok <- stringr::str_squish(tok %||% "")
+  if (tok == "") return(NA_character_)
+  # If token contains a comma, assume "Last, First/Initials"
+  if (stringr::str_detect(tok, ",")) {
+    parts <- stringr::str_split(tok, ",\\s*", n = 2, simplify = TRUE)
+    last  <- stringr::str_to_title(parts[,1])
+    rhs   <- ifelse(ncol(parts) >= 2, parts[,2], "")
+    inits <- stringr::str_replace_all(rhs, "[^A-Za-z]", "")        # keep letters only
+    inits <- stringr::str_to_upper(inits)
+    inits <- paste(stringr::str_split(inits, "", simplify = TRUE), collapse = "")
+    inits <- paste(stringr::str_split(inits, "", simplify = TRUE), collapse = "") # ensure scalar
+    if (nzchar(inits)) paste0(last, ", ", inits) else last
+  } else {
+    # Assume "First Middle Last" → "Last, FM"
+    parts <- stringr::str_split(tok, "\\s+", simplify = TRUE)
+    if (length(parts) == 0) return(NA_character_)
+    last  <- stringr::str_to_title(parts[, ncol(parts), drop = TRUE])
+    given <- parts[, seq_len(ncol(parts)-1), drop = TRUE]
+    if (length(given) == 0) return(last)
+    initials <- stringr::str_to_upper(stringr::str_sub(given, 1, 1))
+    initials <- paste0(initials, collapse = "")
+    paste0(last, ", ", initials)
+  }
+}
+
+# Vectorized wrapper: "A; B" / "A & B" / "A and B" → first author normalized
+first_author_vec <- function(authors_chr) {
+  purrr::map_chr(authors_chr, ~{
+    if (is.na(.x) || .x == "") return(NA_character_)
+    first_tok <- .split_first(.x)
+    .norm_one_author(first_tok)
+  })
+}
+
+# Build table ------------------------------------------------------------------
 
 meta_table <- all_dat2 %>%
   dplyr::mutate(
-    Author   = fix_author_case(Authors),
-    Year     = Publication.Year,
-    Citation = if_else(
-      !is.na(Authors) & !is.na(Article.Title) & !is.na(Source.Title) & !is.na(Year),
-      paste0(
-        Author, " (", Year, "). ",
-        stringr::str_to_sentence(Article.Title), ". *",
-        stringr::str_to_title(Source.Title), "*."
-      ),
+    Author = first_author_vec(Authors),
+    Year   = Publication.Year,
+    Title  = stringr::str_to_sentence(Article.Title),
+    Journal= stringr::str_to_title(Source.Title),
+    Citation = dplyr::if_else(
+      !is.na(Author) & !is.na(Title) & !is.na(Journal) & !is.na(Year),
+      paste0(Author, " (", Year, "). ", Title, ". *", Journal, "*."),
       NA_character_
     )
   ) %>%
@@ -292,10 +333,18 @@ meta_table <- all_dat2 %>%
     Variance = round(Variance, 5)
   )
 
+# Save CSV + HTML --------------------------------------------------------------
+
+readr::write_csv(
+  meta_table,
+  here::here("figures", "meta_analysis_table.csv"),
+  na = ""
+)
+
 meta_table %>%
   gt::gt() %>%
   gt::tab_header(
-    title    = md("**Summary of Studies Included in Meta-Analysis**"),
+    title    = gt::md("**Summary of Studies Included in Meta-Analysis**"),
     subtitle = "Effect Size, Variance, and Metadata by Substudy"
   ) %>%
   gt::fmt_number(columns = c("Beta", "Variance"), decimals = 3) %>%
@@ -304,7 +353,7 @@ meta_table %>%
     Substudy     = "Substudy #",
     Beta         = "Effect Size (β)",
     Variance     = "Variance (asinh)",
-    Author       = "First Author(s)",  
+    Author       = "First Author",
     Year         = "Year",
     DOI          = "DOI",
     g_sp         = "Species",
@@ -312,17 +361,10 @@ meta_table %>%
     mean_density = "Mean Density (m^2)"
   ) %>%
   gt::tab_options(
-    table.font.size           = px(13),
+    table.font.size           = gt::px(13),
     column_labels.font.weight = "bold",
     heading.align             = "center"
   ) %>%
   gt::gtsave(filename = here::here("output", "meta_analysis_table.html"))
-
-# Write the raw meta_table for external use
-readr::write_csv(
-  meta_table,
-  here::here("figures", "meta_analysis_table.csv"),
-  na = ""
-)
 
 # End of 1_data_phylogeny_loading.R
